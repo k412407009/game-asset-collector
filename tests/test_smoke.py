@@ -25,3 +25,12 @@ def test_select_appstore_candidate_rejects_fuzzy_match() -> None:
 
     assert app is None
     assert "too weak" in reason or "ambiguous" in reason
+
+
+def test_build_doctor_report_exposes_core_fields() -> None:
+    report = fetch_game_assets._build_doctor_report()
+
+    assert report["repo_root"].endswith("game-asset-collector")
+    assert "python_ok" in report
+    assert "commands" in report
+    assert "keys" in report

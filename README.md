@@ -78,6 +78,12 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+先体检一遍环境：
+
+```bash
+python scripts/fetch_game_assets.py --doctor
+```
+
 ```bash
 # 只抓 Google Play
 python scripts/fetch_game_assets.py "Last Beacon: Survival" \
@@ -95,6 +101,14 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
   --video 2l4DO5Z10jo \
   --label
 ```
+
+`--doctor` 会检查：
+
+- Python 版本
+- `.env` 是否被发现
+- `TAVILY_API_KEY` / `ARK_API_KEY`
+- `yt-dlp` / `ffmpeg`
+- `google_play_scraper`
 
 ## 输出约定
 

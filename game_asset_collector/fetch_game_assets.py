@@ -37,11 +37,15 @@ Outputs (project mode):
   <project>/images/_game_assets_meta/<game>.image_resource_list.md
 """
 
+from __future__ import annotations
+
 import argparse
 import base64
+import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -166,6 +170,143 @@ def _sanitize(name: str) -> str:
     """Convert game name into a filesystem-safe directory name (cross-platform)."""
     cleaned = re.sub(r'[<>:"/\\|?*\s]+', '-', name).strip('-')
     return cleaned[:80] or "unnamed"
+
+
+def _module_available(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+def _find_recommended_python() -> tuple[str, str] | None:
+    candidates = [
+        "/opt/homebrew/bin/python3",
+        "python3.14",
+        "python3.13",
+        "python3.12",
+        "python3.11",
+        "python3.10",
+    ]
+    for candidate in candidates:
+        path = candidate if candidate.startswith("/") else shutil.which(candidate)
+        if not path:
+            continue
+        try:
+            out = subprocess.check_output(
+                [path, "-c", "import sys; print(sys.version.split()[0])"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            continue
+        parts = tuple(int(x) for x in out.split(".")[:2])
+        if parts >= (3, 10):
+            return path, out
+    return None
+
+
+def _build_doctor_report() -> dict:
+    env_paths = [str(path) for path in _iter_dotenv_paths() if path.exists()]
+    report = {
+        "repo_root": str(COLLECTOR_ROOT),
+        "python_version": sys.version.split()[0],
+        "python_ok": sys.version_info >= (3, 10),
+        "env_files": env_paths,
+        "keys": {
+            "TAVILY_API_KEY": bool(TAVILY_API_KEY),
+            "ARK_API_KEY": bool(ARK_API_KEY),
+        },
+        "commands": {
+            "yt-dlp": shutil.which("yt-dlp"),
+            "ffmpeg": shutil.which("ffmpeg"),
+        },
+        "modules": {
+            "google_play_scraper": _module_available("google_play_scraper"),
+            "Pillow": _module_available("PIL"),
+        },
+    }
+    return report
+
+
+def _run_doctor() -> int:
+    report = _build_doctor_report()
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    def _line(status: str, label: str, detail: str) -> None:
+        print(f"[{status}] {label}: {detail}")
+
+    print("== game-asset-collector doctor ==")
+    _line("OK", "repo", report["repo_root"])
+
+    if report["python_ok"]:
+        _line("OK", "python", report["python_version"])
+    else:
+        _line("MISS", "python", f"{report['python_version']}（需要 >= 3.10）")
+        blockers.append("Python 版本低于 3.10")
+
+    env_files = report["env_files"]
+    if env_files:
+        _line("OK", ".env", " ; ".join(env_files))
+    else:
+        _line("WARN", ".env", "未找到 .env 文件，将只读取当前 shell 环境变量")
+        warnings.append("未找到 .env 文件")
+
+    if report["keys"]["TAVILY_API_KEY"]:
+        _line("OK", "TAVILY_API_KEY", "已配置（网页抓取兜底可用）")
+    else:
+        _line("WARN", "TAVILY_API_KEY", "未配置，商店页文本兜底会降级")
+        warnings.append("未配置 TAVILY_API_KEY")
+
+    if report["keys"]["ARK_API_KEY"]:
+        _line("OK", "ARK_API_KEY", "已配置（AI 标签与中文描述可用）")
+    else:
+        _line("WARN", "ARK_API_KEY", "未配置，将退化成启发式标签")
+        warnings.append("未配置 ARK_API_KEY")
+
+    for cmd, label in (("yt-dlp", "视频下载"), ("ffmpeg", "抽帧")):
+        path = report["commands"][cmd]
+        if path:
+            _line("OK", cmd, f"{path}（{label}可用）")
+        else:
+            _line("WARN", cmd, f"未找到，gameplay 链路会不可用（{label}）")
+            warnings.append(f"未找到 {cmd}")
+
+    if report["modules"]["google_play_scraper"]:
+        _line("OK", "google_play_scraper", "Google Play 结构化抓取可用")
+    else:
+        _line("WARN", "google_play_scraper", "未安装，将回退 Tavily / 网页抓取")
+        warnings.append("未安装 google_play_scraper")
+
+    if report["modules"]["Pillow"]:
+        _line("OK", "Pillow", "图片读写可用")
+    else:
+        _line("MISS", "Pillow", "未安装，脚本无法正常处理图片")
+        blockers.append("未安装 Pillow")
+
+    print("\n总结:")
+    if blockers:
+        print(f"- 阻塞项 {len(blockers)} 个：")
+        for item in blockers:
+            print(f"  - {item}")
+    else:
+        print("- 没有阻塞项。")
+
+    if warnings:
+        print(f"- 提醒 {len(warnings)} 个：")
+        for item in warnings:
+            print(f"  - {item}")
+    else:
+        print("- 关键推荐项均已就绪。")
+
+    print("\n建议:")
+    print("- 只抓商店图：当前即可运行 `--store-only`")
+    print("- 抓视频/抽帧：请确保 `yt-dlp` 和 `ffmpeg` 都可用")
+    print("- 想要完整标签与描述：补齐 `ARK_API_KEY`")
+    if blockers:
+        recommended = _find_recommended_python()
+        if recommended is not None:
+            path, version = recommended
+            print(f"- 当前默认 python 不够新，建议改用：{path} （{version}）")
+    return 0 if not blockers else 2
 
 
 APPSTORE_GENERIC_TOKENS = {
@@ -1234,6 +1375,7 @@ def main():
     parser = argparse.ArgumentParser(description="Game asset auto-collector")
     parser.add_argument("game", nargs="?", help="game name")
     parser.add_argument("--list", action="store_true", help="list collected games")
+    parser.add_argument("--doctor", action="store_true", help="检查环境、依赖和 API key")
     parser.add_argument("--project",
                         help="consumer project root (lands assets in <project>/images/_game_assets/<game>/)")
     parser.add_argument("--out",
@@ -1279,6 +1421,9 @@ def main():
                         help="scene-detect threshold (default 0.3)")
 
     args = parser.parse_args()
+
+    if args.doctor:
+        return _run_doctor()
 
     # --list resolves with project / out / default fallback
     if args.list:
@@ -1377,4 +1522,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
