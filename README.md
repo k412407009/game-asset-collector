@@ -2,6 +2,24 @@
 
 共享的游戏素材采集模块。职责只保留一件事：把商店截图、视频关键帧、标签和描述采到统一结构里，供 `ppt-master` 和 `game-review` 共同消费。
 
+## 在三仓架构里的位置
+
+推荐和下面两个仓库放在同级目录：
+
+- `ppt-master`
+- `game-asset-collector`
+- `game-review`
+
+其中：
+
+- `ppt-master` 负责主工作流和最终 PPT
+- `game-asset-collector` 负责素材抓取与视觉证据
+- `game-review` 负责结构化评审报告
+
+总入口说明见：
+
+- `../ppt-master/docs/三仓协同架构_THREE_REPO_STACK.md`
+
 ## 为什么拆出来
 
 - `personal-assistant/丁开心的游戏观察/sources/fetch_game_assets.py` 是更早的祖先版
