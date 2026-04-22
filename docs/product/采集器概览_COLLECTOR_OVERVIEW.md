@@ -4,7 +4,7 @@
 
 把“商店截图抓取 + 视频下载抽帧 + 画面标签/描述生成”抽成一个独立模块，给：
 
-- `ppt-master` 的 Skill 流
+- `game-ppt-master` 的 Skill 流
 - `game-review` 的网站 / API 流
 - `personal-assistant` 的历史脚本入口
 

@@ -10,7 +10,7 @@ game-asset-collector/
 ## 消费方式
 
 ```text
-ppt-master wrapper
+game-ppt-master wrapper
   -> import shared collector
 
 personal-assistant wrapper
@@ -18,7 +18,7 @@ personal-assistant wrapper
 
 game-review bridge
   -> subprocess shared collector
-  -> fallback to ppt-master wrapper
+  -> fallback to game-ppt-master / ppt-master wrapper
   -> fallback to internal lightweight collector
 ```
 
@@ -29,8 +29,9 @@ game-review bridge
 - `.env` 会按这个顺序探测：
   1. `GAME_ASSET_COLLECTOR_ENV`
   2. `game-asset-collector/.env`
-  3. `../ppt-master/.env`
-  4. `../personal-assistant/.baoyu-skills/.env`
+  3. `../game-ppt-master/.env`
+  4. `../ppt-master/.env`
+  5. `../personal-assistant/.baoyu-skills/.env`
 
 ## 当前已确认的优势
 

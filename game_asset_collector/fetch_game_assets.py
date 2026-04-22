@@ -22,7 +22,8 @@ Usage (legacy standalone mode, asset library style):
 
 Inputs:
   - .env at game-asset-collector repo root for TAVILY_API_KEY / ARK_API_KEY
-    (also falls back to current process env vars, sibling ppt-master/.env,
+    (also falls back to current process env vars, sibling game-ppt-master/.env,
+     sibling ppt-master/.env,
      and sibling personal-assistant/.baoyu-skills/.env for local compatibility)
   - System: yt-dlp, ffmpeg on PATH (install separately)
   - Optional Python dep: google-play-scraper for the GP path
@@ -87,6 +88,7 @@ def _iter_dotenv_paths() -> list[Path]:
 
     candidates.append(COLLECTOR_ROOT / ".env")
     workspace_root = COLLECTOR_ROOT.parent
+    candidates.append(workspace_root / "game-ppt-master" / ".env")
     candidates.append(workspace_root / "ppt-master" / ".env")
     candidates.append(workspace_root / "personal-assistant" / ".baoyu-skills" / ".env")
 

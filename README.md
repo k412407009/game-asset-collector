@@ -1,24 +1,25 @@
 # game-asset-collector
 
-共享的游戏素材采集模块。职责只保留一件事：把商店截图、视频关键帧、标签和描述采到统一结构里，供 `ppt-master` 和 `game-review` 共同消费。
+共享的游戏素材采集模块。职责只保留一件事：把商店截图、视频关键帧、标签和描述采到统一结构里，供 `game-ppt-master` 和 `game-review` 共同消费。
 
 ## 在三仓架构里的位置
 
 推荐和下面两个仓库放在同级目录：
 
-- `ppt-master`
+- `game-ppt-master`
 - `game-asset-collector`
 - `game-review`
 
 其中：
 
-- `ppt-master` 负责主工作流和最终 PPT
+- `game-ppt-master` 负责主工作流和最终 PPT
 - `game-asset-collector` 负责素材抓取与视觉证据
 - `game-review` 负责结构化评审报告
 
 总入口说明见：
 
-- `../ppt-master/docs/三仓协同架构_THREE_REPO_STACK.md`
+- `../game-ppt-master/docs/三仓协同架构_THREE_REPO_STACK.md`
+- 兼容旧本地目录：`../ppt-master/docs/三仓协同架构_THREE_REPO_STACK.md`
 
 公开仓库地址：
 
@@ -27,16 +28,16 @@
 ## 为什么拆出来
 
 - `personal-assistant/丁开心的游戏观察/sources/fetch_game_assets.py` 是更早的祖先版
-- `ppt-master/skills/ppt-master/scripts/game_assets/fetch_game_assets.py` 是当前最强版本
+- `game-ppt-master/skills/ppt-master/scripts/game_assets/fetch_game_assets.py` 是当前最强版本
 - `game-review` 想做独立网站，但又不能再维护一套分叉的抓取逻辑
 
 这次拆分后的原则是：
 
 - 主实现只保留在 `game-asset-collector`
-- `ppt-master` 和 `personal-assistant` 只留兼容 wrapper
+- `game-ppt-master` 和 `personal-assistant` 只留兼容 wrapper
 - `game-review` 优先桥接共享模块，找不到时才回退
 
-## 这版为什么选 `ppt-master` 当事实源
+## 这版为什么选 `game-ppt-master` 当事实源
 
 同一批 `Last Beacon: Survival` 样本实测结果：
 
@@ -44,9 +45,9 @@
 - `personal-assistant` 旧版 `--store-only --label` 会因为缺少 `gameplay/` 目录直接报错
 - `personal-assistant` 旧版没有手动 `--video` 入口，只能靠自动搜索
 - `personal-assistant` 旧版没有 `descriptions.json`
-- `ppt-master` 版已经补了严格 App Store 选择、手动视频入口、`descriptions.json`、竖屏误判修正、项目化输出和资源清单
+- `game-ppt-master` 版已经补了严格 App Store 选择、手动视频入口、`descriptions.json`、竖屏误判修正、项目化输出和资源清单
 
-所以共享模块直接以 `ppt-master` 当前实现为基线，而不是再从 `personal-assistant` 重做一遍。
+所以共享模块直接以 `game-ppt-master` 当前实现为基线，而不是再从 `personal-assistant` 重做一遍。
 
 ## 目录
 
@@ -111,4 +112,4 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
   meta/<game>.image_resource_list.md
 ```
 
-如果是 `--project <project_root>`，则落到 `<project_root>/images/_game_assets/<game>/...`，兼容 `ppt-master` 现有项目结构。
+如果是 `--project <project_root>`，则落到 `<project_root>/images/_game_assets/<game>/...`，兼容 `game-ppt-master` 现有项目结构。
