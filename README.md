@@ -20,6 +20,10 @@
 
 - `../ppt-master/docs/三仓协同架构_THREE_REPO_STACK.md`
 
+公开仓库地址：
+
+- [https://github.com/k412407009/game-asset-collector](https://github.com/k412407009/game-asset-collector)
+
 ## 为什么拆出来
 
 - `personal-assistant/丁开心的游戏观察/sources/fetch_game_assets.py` 是更早的祖先版
@@ -66,6 +70,7 @@ game-asset-collector/
 ## 快速用法
 
 ```bash
+git clone https://github.com/k412407009/game-asset-collector.git
 cd /Users/ahs/Desktop/Git/game-asset-collector
 python3 -m venv .venv
 source .venv/bin/activate
