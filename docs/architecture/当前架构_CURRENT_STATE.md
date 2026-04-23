@@ -46,3 +46,9 @@ game-review bridge
 - 会写 `descriptions.json`
 - 修掉了竖屏手游被误判成 `ui-menu` 的启发式错误
 - `--store-only --label` 不会因目录缺失而崩
+- 默认会自动判别 `walkthrough` vs `trailer`
+- `walkthrough` 默认走时间轴 `analysis` 抽帧
+- `trailer` 默认走 `scene` 抽帧
+- `analysis` 输出可直接被 `game-review` 复用：
+  - `gameplay/frame_index.json`
+  - `gameplay/timeline_summary.md`

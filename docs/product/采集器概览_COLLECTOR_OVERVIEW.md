@@ -24,8 +24,28 @@
 - 视频关键帧
 - `labels.json`
 - `descriptions.json`
+- `frame_index.json`（analysis 模式）
+- `timeline_summary.md`（analysis 模式）
 - `metadata.json`
 - `image_resource_list.md`
+
+## 视频模式判别
+
+默认情况下，调用方不需要预先告诉系统这是 walkthrough 还是 trailer。
+
+采集器会结合：
+
+- 视频标题关键词
+- 视频时长
+- 前几帧的 UI / 竖屏特征
+- 前几帧的切换密度
+
+自动选择：
+
+- walkthrough / gameplay / guide -> `analysis`
+- trailer / teaser / preview -> `scene`
+
+`analysis` 的目标不是只挑“漂亮帧”，而是保留 onboarding / 经营 / 战斗 / UI / 地图 / 养成这些可供评审复盘的时间轴样本。
 
 ## 为什么不是直接放在 `game-review`
 

@@ -40,6 +40,8 @@ def test_build_doctor_report_exposes_core_fields() -> None:
 
 def test_env_lookup_accepts_legacy_tavily_key_case(monkeypatch) -> None:
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("Tavily_API_Key", raising=False)
+    monkeypatch.delenv("Tavily_API_KEY", raising=False)
     monkeypatch.setenv("Tavily_API_Key", "demo-key")
 
     value, source = fetch_game_assets._find_env_value("TAVILY_API_KEY")
@@ -77,3 +79,75 @@ def test_write_collection_summary_creates_human_readable_report(tmp_path) -> Non
     assert "采集摘要：Demo Game" in text
     assert "抓到了什么" in text
     assert "还缺什么" in text
+
+
+def test_analysis_segments_prioritize_dense_intro() -> None:
+    segments = fetch_game_assets._analysis_segments(1107.6)
+
+    assert segments[0]["label"] == "intro"
+    assert segments[0]["interval"] == 4
+    assert segments[0]["start"] == 0.0
+    assert segments[0]["end"] == 600.0
+    assert segments[1]["label"] == "mid"
+    assert segments[1]["interval"] == 8
+
+
+def test_decide_video_type_prefers_walkthrough_for_long_gameplay_signal() -> None:
+    video_type, reason = fetch_game_assets._decide_video_type(
+        title="Narco Empire Gameplay Walkthrough (Android)",
+        duration_sec=1107.6,
+        portrait_ratio=0.8,
+        unique_ratio=0.5,
+    )
+
+    assert video_type == "walkthrough"
+    assert reason in {"title-keyword", "portrait-ui", "long-form"}
+
+
+def test_decide_video_type_prefers_trailer_for_short_promo_signal() -> None:
+    video_type, reason = fetch_game_assets._decide_video_type(
+        title="Official Game Trailer",
+        duration_sec=52.0,
+        portrait_ratio=0.0,
+        unique_ratio=0.9,
+    )
+
+    assert video_type == "trailer"
+    assert reason in {"title-keyword", "short-high-cut", "short-form"}
+
+
+def test_write_timeline_summary_uses_frame_index_and_labels(tmp_path) -> None:
+    game_dir = tmp_path / "demo-game"
+    gameplay_dir = game_dir / "gameplay"
+    gameplay_dir.mkdir(parents=True)
+
+    (gameplay_dir / "frame_index.json").write_text(
+        json.dumps(
+            {
+                "gameplay/frames/demo/frame_t000004_0001.jpg": {
+                    "timestamp_sec": 4,
+                    "timestamp": "00:04",
+                    "interval_sec": 4,
+                    "segment": "intro",
+                    "video_filename": "demo.mp4",
+                    "video_slug": "demo",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (gameplay_dir / "labels.json").write_text(
+        json.dumps({"gameplay/frames/demo/frame_t000004_0001.jpg": "tutorial"}),
+        encoding="utf-8",
+    )
+    (gameplay_dir / "descriptions.json").write_text(
+        json.dumps({"gameplay/frames/demo/frame_t000004_0001.jpg": "开场引导点击教程"}),
+        encoding="utf-8",
+    )
+
+    output = fetch_game_assets.write_timeline_summary(game_dir)
+
+    assert output is not None
+    text = output.read_text(encoding="utf-8")
+    assert "Gameplay Timeline Summary" in text
+    assert "00:04 | tutorial [intro] | 开场引导点击教程" in text

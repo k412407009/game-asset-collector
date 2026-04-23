@@ -117,6 +117,26 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
   --label
 ```
 
+```bash
+# 默认自动判别视频类型：
+# walkthrough / gameplay / guide -> analysis
+# trailer / teaser / preview -> scene
+python scripts/fetch_game_assets.py "Narco Empire" \
+  --out /tmp/game-assets \
+  --gameplay-only \
+  --video KNPTUL9X9Zs \
+  --label
+```
+
+```bash
+# 如需强制覆盖自动判别
+python scripts/fetch_game_assets.py "Narcos: Cartel Wars" \
+  --out /tmp/game-assets \
+  --gameplay-only \
+  --video dE0kZ2SsPTA \
+  --scene
+```
+
 `--doctor` 会检查：
 
 - Python 版本
@@ -129,6 +149,44 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
 
 - 现在兼容历史写法 `Tavily_API_Key` / `Tavily_API_KEY`
 - 但对外仍然建议统一写成 `TAVILY_API_KEY`，避免团队里有人误判成“没配”
+
+## 视频抽帧模式
+
+默认不要求调用方提前声明视频类型。采集器会先看：
+
+- 视频标题关键词
+- 视频时长
+- 前几帧是否明显是竖屏 UI / walkthrough
+- 前几帧是否呈现高切换率的 trailer 节奏
+
+然后自动决定抽帧策略：
+
+- `walkthrough` / `gameplay` / `guide` / `part 1` / `实机` / `流程`
+  默认走 `analysis`
+- `trailer` / `teaser` / `preview` / `official trailer` / `预告` / `宣传`
+  默认走 `scene`
+
+`analysis` 模式的时间间隔：
+
+- 前 10 分钟：每 `4` 秒 1 帧
+- 10 到 30 分钟：每 `8` 秒 1 帧
+- 30 分钟后：每 `15` 秒 1 帧
+
+`scene` 模式：
+
+- 用 `ffmpeg select='gt(scene,threshold)'` 按场景切换抽帧
+- 更适合预告片、广告片、PV
+
+两个强制开关仍然保留：
+
+- `--analysis`：无视自动判别，强制走 walkthrough 分析模式
+- `--scene`：无视自动判别，强制走 trailer 场景模式
+
+自动判别结果会落到：
+
+- `metadata.json` 的 `gameplay.videos[*]`
+- `meta/<game>.collection_summary.md`
+- 如果走 `analysis`，还会额外生成 `gameplay/frame_index.json` 和 `gameplay/timeline_summary.md`
 
 跑完采集后，还会自动生成一份“结果单”，告诉你：
 
@@ -150,6 +208,8 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
     frames/<video_slug>/
     labels.json
     descriptions.json
+    frame_index.json
+    timeline_summary.md
   metadata.json
   meta/<game>.image_resource_list.md
   meta/<game>.collection_summary.md

@@ -49,6 +49,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.parse
@@ -718,14 +719,70 @@ def run_store(game_name: str, game_dir: Path, args) -> dict:
 # pHash perceptual de-duplication (pure PIL, zero extra deps)
 # ---------------------------------------------------------------------------
 
-def _phash(img_path: Path, hash_size: int = 8):
+def _region_sharpness(gray_img, box: tuple[int, int, int, int]) -> float:
     try:
         from PIL import Image
-        img = Image.open(img_path).convert('L').resize(
-            (hash_size + 1, hash_size), Image.LANCZOS)
+    except ImportError:
+        return 0.0
+    crop = gray_img.crop(box)
+    crop = crop.resize((64, 64), Image.LANCZOS)
+    pixels = list(crop.getdata())
+    score = 0
+    width = 64
+    for y in range(1, 64):
+        row = y * width
+        prev = (y - 1) * width
+        for x in range(1, width):
+            p = pixels[row + x]
+            score += abs(p - pixels[row + x - 1]) + abs(p - pixels[prev + x])
+    return score / float(width * width)
+
+
+def _active_hash_crop_box(img) -> tuple[int, int, int, int]:
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        return (0, 0, width, height)
+    if width / max(height, 1) < 1.45:
+        return (0, 0, width, height)
+
+    gray = img.convert("L")
+    left_score = _region_sharpness(gray, (0, 0, max(1, width // 5), height))
+    center_score = _region_sharpness(
+        gray,
+        (int(width * 0.4), 0, int(width * 0.6), height),
+    )
+    right_score = _region_sharpness(
+        gray,
+        (int(width * 0.8), 0, width, height),
+    )
+    side_score = max(left_score, right_score, 1.0)
+    if center_score < side_score * 1.22:
+        return (0, 0, width, height)
+
+    portrait_width = min(width, max(int(height * 9 / 16) + 24, int(width * 0.3)))
+    portrait_width = min(portrait_width, int(width * 0.58))
+    x0 = max(0, (width - portrait_width) // 2)
+    x1 = min(width, x0 + portrait_width)
+    return (x0, 0, x1, height)
+
+
+def _phash(img_path: Path, hash_size: int = 12):
+    try:
+        from PIL import Image
+        img = Image.open(img_path).convert("RGB")
+        img = img.crop(_active_hash_crop_box(img)).convert("L").resize(
+            (hash_size + 1, hash_size), Image.LANCZOS
+        )
         pixels = list(img.getdata())
-        avg = sum(pixels) / len(pixels)
-        return sum(1 << i for i, p in enumerate(pixels) if p > avg)
+        bits = 0
+        bit_index = 0
+        for y in range(hash_size):
+            row = y * (hash_size + 1)
+            for x in range(hash_size):
+                if pixels[row + x] > pixels[row + x + 1]:
+                    bits |= 1 << bit_index
+                bit_index += 1
+        return bits
     except Exception:
         return None
 
@@ -734,26 +791,337 @@ def _hamming(h1: int, h2: int) -> int:
     return bin(h1 ^ h2).count('1')
 
 
-def deduplicate_frames(frames_dir: Path, threshold: int = 8) -> int:
-    print("   🧹 pHash perceptual dedup...")
-    all_frames = []
+def deduplicate_frames(
+    frames_dir: Path,
+    threshold: int = 8,
+    mode: str = "global",
+    recent_window: int = 6,
+) -> int:
+    print(f"   🧹 perceptual dedup ({mode})...")
+    frame_groups: list[list[Path]] = []
+
+    root_level = sorted(frames_dir.glob("*.jpg"))
+    if root_level:
+        frame_groups.append(root_level)
     for d in sorted(frames_dir.iterdir()):
         if d.is_dir():
-            all_frames.extend(sorted(d.glob("*.jpg")))
-    if not all_frames:
+            group = sorted(d.glob("*.jpg"))
+            if group:
+                frame_groups.append(group)
+
+    if not frame_groups:
         return 0
-    hashes, removed = [], 0
-    for fpath in all_frames:
-        h = _phash(fpath)
+
+    scanned_total = 0
+    removed_total = 0
+    for group in frame_groups:
+        hashes: list[int] = []
+        recent_hashes: list[int] = []
+        for fpath in group:
+            scanned_total += 1
+            h = _phash(fpath)
+            if h is None:
+                continue
+            compare_pool = recent_hashes if mode == "sequential" else hashes
+            if any(_hamming(h, existing) < threshold for existing in compare_pool):
+                fpath.unlink()
+                removed_total += 1
+                continue
+            hashes.append(h)
+            if mode == "sequential":
+                recent_hashes.append(h)
+                if len(recent_hashes) > recent_window:
+                    recent_hashes = recent_hashes[-recent_window:]
+
+    kept_total = scanned_total - removed_total
+    print(f"      scanned {scanned_total}, removed {removed_total}, kept {kept_total}")
+    return removed_total
+
+
+def _probe_video_duration(video_path: Path) -> float | None:
+    rc, output = _run_cmd(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ],
+        timeout=30,
+    )
+    if rc != 0:
+        return None
+    try:
+        return float(output.strip().splitlines()[-1])
+    except Exception:
+        return None
+
+
+def _format_timestamp(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    minutes, secs = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _analysis_segments(duration_sec: float) -> list[dict[str, float | int | str]]:
+    if duration_sec <= 0:
+        return []
+    if duration_sec <= 300:
+        return [{"label": "full", "start": 0.0, "end": duration_sec, "interval": 2}]
+
+    plan = [
+        ("intro", 600.0, 4),
+        ("mid", 1800.0, 8),
+        ("late", duration_sec, 15),
+    ]
+    segments: list[dict[str, float | int | str]] = []
+    cursor = 0.0
+    for label, boundary, interval in plan:
+        if cursor >= duration_sec:
+            break
+        end = min(duration_sec, boundary)
+        if end - cursor < max(2.0, interval * 0.75):
+            continue
+        segments.append(
+            {
+                "label": label,
+                "start": cursor,
+                "end": end,
+                "interval": interval,
+            }
+        )
+        cursor = end
+    if not segments:
+        segments.append({"label": "full", "start": 0.0, "end": duration_sec, "interval": 4})
+    return segments
+
+
+def _extract_analysis_frames(video_path: Path, frames_dir: Path) -> list[dict[str, object]]:
+    duration_sec = _probe_video_duration(video_path)
+    if not duration_sec:
+        return []
+
+    entries: list[dict[str, object]] = []
+    counter = 1
+    for seg_index, segment in enumerate(_analysis_segments(duration_sec), start=1):
+        start_sec = float(segment["start"])
+        end_sec = float(segment["end"])
+        interval_sec = int(segment["interval"])
+        segment_label = str(segment["label"])
+        output_pattern = str(frames_dir / f"{segment_label}_{seg_index:02d}_%04d.jpg")
+        cmd = ["ffmpeg"]
+        if start_sec > 0:
+            cmd.extend(["-ss", str(start_sec)])
+        cmd.extend(["-i", str(video_path), "-t", str(max(0.1, end_sec - start_sec))])
+        cmd.extend(
+            [
+                "-vf",
+                f"fps=1/{interval_sec},scale=1280:-2",
+                "-q:v",
+                "2",
+                output_pattern,
+                "-y",
+                "-loglevel",
+                "warning",
+            ]
+        )
+        rc, _output = _run_cmd(cmd, timeout=300)
+        if rc != 0:
+            continue
+
+        generated = sorted(frames_dir.glob(f"{segment_label}_{seg_index:02d}_*.jpg"))
+        for item_index, img_path in enumerate(generated):
+            timestamp_sec = min(duration_sec, start_sec + item_index * interval_sec)
+            final_name = f"frame_t{int(round(timestamp_sec)):06d}_{counter:04d}.jpg"
+            final_path = frames_dir / final_name
+            img_path.rename(final_path)
+            entries.append(
+                {
+                    "relative_path": final_path,
+                    "timestamp_sec": round(timestamp_sec, 1),
+                    "timestamp": _format_timestamp(timestamp_sec),
+                    "interval_sec": interval_sec,
+                    "segment": segment_label,
+                }
+            )
+            counter += 1
+    return entries
+
+
+def _write_frame_index(game_dir: Path, entries: list[dict[str, object]]) -> Path | None:
+    if not entries:
+        return None
+    payload: dict[str, dict[str, object]] = {}
+    for entry in entries:
+        rel_path = Path(entry["relative_path"]).relative_to(game_dir).as_posix()
+        payload[rel_path] = {
+            "timestamp_sec": entry["timestamp_sec"],
+            "timestamp": entry["timestamp"],
+            "interval_sec": entry["interval_sec"],
+            "segment": entry["segment"],
+            "video_filename": entry["video_filename"],
+            "video_slug": entry["video_slug"],
+        }
+    frame_index_path = game_dir / "gameplay" / "frame_index.json"
+    frame_index_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return frame_index_path
+
+
+WALKTHROUGH_KEYWORDS = (
+    "walkthrough",
+    "gameplay",
+    "playthrough",
+    "longplay",
+    "guide",
+    "part 1",
+    "full game",
+    "full walkthrough",
+    "实机",
+    "流程",
+    "攻略",
+)
+
+TRAILER_KEYWORDS = (
+    "trailer",
+    "teaser",
+    "official trailer",
+    "announcement",
+    "preview",
+    "promo",
+    "commercial",
+    "advert",
+    "advertisement",
+    "预告",
+    "宣传",
+    "pv",
+)
+
+
+def _keyword_hit_count(text: str, keywords: tuple[str, ...]) -> int:
+    lowered = text.lower()
+    return sum(1 for keyword in keywords if keyword in lowered)
+
+
+def _portrait_probe_ratio(frame_paths: list[Path]) -> float:
+    try:
+        from PIL import Image
+    except ImportError:
+        return 0.0
+    portrait_like = 0
+    valid = 0
+    for path in frame_paths:
+        try:
+            img = Image.open(path).convert("RGB")
+        except Exception:
+            continue
+        valid += 1
+        box = _active_hash_crop_box(img)
+        active_width = max(1, box[2] - box[0])
+        if active_width / max(img.size[0], 1) < 0.72:
+            portrait_like += 1
+    if valid == 0:
+        return 0.0
+    return portrait_like / float(valid)
+
+
+def _probe_uniqueness_ratio(frame_paths: list[Path]) -> float:
+    hashes: list[int] = []
+    valid = 0
+    unique = 0
+    for path in frame_paths:
+        h = _phash(path)
         if h is None:
             continue
-        if any(_hamming(h, eh) < threshold for eh in hashes):
-            fpath.unlink()
-            removed += 1
-        else:
+        valid += 1
+        if not hashes or all(_hamming(h, existing) >= 6 for existing in hashes):
+            unique += 1
             hashes.append(h)
-    print(f"      scanned {len(all_frames)}, removed {removed}, kept {len(all_frames) - removed}")
-    return removed
+    if valid == 0:
+        return 0.0
+    return unique / float(valid)
+
+
+def _decide_video_type(
+    title: str,
+    duration_sec: float | None,
+    portrait_ratio: float,
+    unique_ratio: float,
+) -> tuple[str, str]:
+    walkthrough_hits = _keyword_hit_count(title, WALKTHROUGH_KEYWORDS)
+    trailer_hits = _keyword_hit_count(title, TRAILER_KEYWORDS)
+
+    if trailer_hits and not walkthrough_hits:
+        return "trailer", "title-keyword"
+    if walkthrough_hits and not trailer_hits:
+        return "walkthrough", "title-keyword"
+    if portrait_ratio >= 0.5:
+        return "walkthrough", "portrait-ui"
+    if duration_sec and duration_sec <= 180 and unique_ratio >= 0.75 and portrait_ratio < 0.4:
+        return "trailer", "short-high-cut"
+    if duration_sec and duration_sec >= 300:
+        return "walkthrough", "long-form"
+    if duration_sec and duration_sec <= 180:
+        return "trailer", "short-form"
+    return "walkthrough", "fallback-default"
+
+
+def detect_video_strategy(video_path: Path) -> dict[str, object]:
+    duration_sec = _probe_video_duration(video_path)
+    probe_frames: list[Path] = []
+    sample_count = 0
+    with tempfile.TemporaryDirectory(prefix="collector-probe-") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        span_sec = 90 if not duration_sec else min(90, max(30, int(duration_sec * 0.2)))
+        cmd = [
+            "ffmpeg",
+            "-i",
+            str(video_path),
+            "-t",
+            str(span_sec),
+            "-vf",
+            "fps=1/15,scale=640:-2",
+            "-q:v",
+            "5",
+            str(tmp_path / "probe_%03d.jpg"),
+            "-y",
+            "-loglevel",
+            "warning",
+        ]
+        rc, _output = _run_cmd(cmd, timeout=60)
+        if rc == 0:
+            probe_frames = sorted(tmp_path.glob("probe_*.jpg"))
+            sample_count = len(probe_frames)
+            portrait_ratio = _portrait_probe_ratio(probe_frames)
+            unique_ratio = _probe_uniqueness_ratio(probe_frames)
+        else:
+            portrait_ratio = 0.0
+            unique_ratio = 0.0
+
+    video_type, reason = _decide_video_type(
+        title=video_path.stem,
+        duration_sec=duration_sec,
+        portrait_ratio=portrait_ratio,
+        unique_ratio=unique_ratio,
+    )
+    extraction_mode = "analysis" if video_type == "walkthrough" else "scene"
+    return {
+        "video_type": video_type,
+        "extraction_mode": extraction_mode,
+        "reason": reason,
+        "duration_sec": round(duration_sec, 1) if duration_sec else None,
+        "probe_samples": sample_count,
+        "portrait_ratio": round(portrait_ratio, 3),
+        "uniqueness_ratio": round(unique_ratio, 3),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -764,6 +1132,7 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
                    scene_threshold: float = 0.3, keep_video: bool = False,
                    smart: bool = True, frame_interval: int = 5,
                    scene_mode: bool = False,
+                   analysis_mode: bool = False,
                    manual_targets: list[str] | None = None) -> dict:
     """yt-dlp YouTube/Bilibili search → download → ffmpeg frame extraction.
 
@@ -771,10 +1140,13 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
     smart=True (default) : sparse sampling (1 frame per N seconds) + pHash dedup
     smart=False / no-smart : legacy ffmpeg scene-detection without dedup
     """
-    if scene_mode:
-        mode_str = f"scene-detect+dedup th{scene_threshold}"
+    auto_mode = smart and not analysis_mode and not scene_mode
+    if analysis_mode:
+        mode_str = "analysis-timeline (forced)"
+    elif scene_mode:
+        mode_str = f"scene-detect+dedup th{scene_threshold} (forced)"
     elif smart:
-        mode_str = f"sparse 1/{frame_interval}s+dedup"
+        mode_str = "auto-detect walkthrough/trailer"
     else:
         mode_str = f"scene-detect th{scene_threshold} (legacy)"
     print(f"\n📹 Gameplay video collection (max {max_videos} videos, {mode_str})...")
@@ -843,13 +1215,38 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
     print(f"   ✓ downloaded {len(all_videos)} videos")
     total_frames = 0
     video_info = []
+    frame_index_entries: list[dict[str, object]] = []
 
     for vpath in all_videos:
         vname = vpath.stem
         vframes_dir = frames_dir / _sanitize(vname)
         vframes_dir.mkdir(parents=True, exist_ok=True)
+        auto_detection = detect_video_strategy(vpath)
+        extraction_mode = auto_detection["extraction_mode"] if auto_mode else ("analysis" if analysis_mode else "scene")
+        if auto_mode:
+            print(
+                "   🧭 auto-detect:"
+                f" {vpath.name[:60]} -> {auto_detection['video_type']} -> {extraction_mode}"
+                f" ({auto_detection['reason']}, dur={auto_detection.get('duration_sec')},"
+                f" portrait={auto_detection.get('portrait_ratio')},"
+                f" unique={auto_detection.get('uniqueness_ratio')})"
+            )
+        else:
+            print(
+                "   🧭 detected:"
+                f" {vpath.name[:60]} -> {auto_detection['video_type']}"
+                f" ({auto_detection['reason']}); using forced {extraction_mode}"
+            )
 
-        if scene_mode:
+        if extraction_mode == "analysis":
+            print(f"   🔍 analysis extract: {vpath.name[:60]}...")
+            extracted_entries = _extract_analysis_frames(vpath, vframes_dir)
+            extracted = sorted(vframes_dir.glob("*.jpg"))
+            for entry in extracted_entries:
+                entry["video_filename"] = vpath.name
+                entry["video_slug"] = _sanitize(vname)
+                frame_index_entries.append(entry)
+        elif scene_mode or extraction_mode == "scene":
             print(f"   🔍 scene-detect extract: {vpath.name[:60]}...")
             cmd_ff = [
                 "ffmpeg", "-i", str(vpath),
@@ -877,22 +1274,45 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
                 "-y", "-loglevel", "warning",
             ]
 
-        rc, output = _run_cmd(cmd_ff, timeout=120)
-        if rc == -2:
-            print("   ⚠ ffmpeg not on PATH. Install: `winget install ffmpeg` / `brew install ffmpeg`")
-            return {}
-        extracted = list(vframes_dir.glob("*.jpg"))
+        if not analysis_mode:
+            rc, output = _run_cmd(cmd_ff, timeout=120)
+            if rc == -2:
+                print("   ⚠ ffmpeg not on PATH. Install: `winget install ffmpeg` / `brew install ffmpeg`")
+                return {}
+            extracted = list(vframes_dir.glob("*.jpg"))
         total_frames += len(extracted)
         video_info.append({
             "filename": vpath.name,
             "size_mb": round(vpath.stat().st_size / 1024 / 1024, 1),
             "frames_extracted": len(extracted),
             "frames_dir": str(vframes_dir.relative_to(game_dir)),
+            "video_type": auto_detection["video_type"],
+            "detected_mode": auto_detection["extraction_mode"],
+            "used_mode": extraction_mode,
+            "detection_reason": auto_detection["reason"],
+            "duration_sec": auto_detection["duration_sec"],
+            "probe_samples": auto_detection["probe_samples"],
+            "portrait_ratio": auto_detection["portrait_ratio"],
+            "uniqueness_ratio": auto_detection["uniqueness_ratio"],
         })
         print(f"      → {len(extracted)} frames")
 
     dedup_removed = 0
-    if (smart or scene_mode) and total_frames > 0:
+    if total_frames > 0 and (analysis_mode or any(info.get("used_mode") == "analysis" for info in video_info)):
+        dedup_removed = deduplicate_frames(
+            frames_dir,
+            threshold=5,
+            mode="sequential",
+            recent_window=4,
+        )
+        total_frames -= dedup_removed
+        if frame_index_entries:
+            frame_index_entries = [
+                entry
+                for entry in frame_index_entries
+                if Path(entry["relative_path"]).exists()
+            ]
+    elif (smart or scene_mode) and total_frames > 0:
         dedup_removed = deduplicate_frames(frames_dir)
         total_frames -= dedup_removed
 
@@ -905,10 +1325,21 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
 
     print(f"   ✓ kept {total_frames} frames"
           + (f" (dedup removed {dedup_removed})" if dedup_removed else ""))
-    mode_label = ("scene+dedup" if scene_mode
-                  else ("smart" if smart else "scene"))
-    return {"videos": video_info, "total_frames": total_frames,
-            "dedup_removed": dedup_removed, "mode": mode_label}
+    frame_index_path = _write_frame_index(game_dir, frame_index_entries)
+    mode_label = (
+        "analysis"
+        if analysis_mode
+        else ("scene+dedup" if scene_mode else ("auto" if auto_mode else ("smart" if smart else "scene")))
+    )
+    result = {
+        "videos": video_info,
+        "total_frames": total_frames,
+        "dedup_removed": dedup_removed,
+        "mode": mode_label,
+    }
+    if frame_index_path:
+        result["frame_index"] = str(frame_index_path.relative_to(game_dir))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -929,6 +1360,16 @@ SCENE_QUOTA = {
 
 VISION_MODEL_LITE = "doubao-seed-1-6-vision-250815"
 VISION_MODEL_HEAVY = "doubao-seed-1-6-vision-250815"
+
+
+def _frame_sort_key(rel_path: str) -> tuple[int, int, str]:
+    match = re.search(r"frame_t(\d+)", rel_path)
+    if match:
+        return (0, int(match.group(1)), rel_path)
+    fallback = re.search(r"frame_(\d+)", rel_path)
+    if fallback:
+        return (1, int(fallback.group(1)), rel_path)
+    return (2, 0, rel_path)
 
 
 def _get_image_info(img_path: Path):
@@ -1011,14 +1452,93 @@ def _parse_label_desc(raw: str) -> tuple[str, str]:
     return label, desc
 
 
+def write_timeline_summary(game_dir: Path) -> Path | None:
+    gameplay_dir = game_dir / "gameplay"
+    frame_index_path = gameplay_dir / "frame_index.json"
+    if not frame_index_path.exists():
+        return None
+
+    try:
+        frame_index = json.loads(frame_index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(frame_index, dict) or not frame_index:
+        return None
+
+    labels = {}
+    descriptions = {}
+    labels_path = gameplay_dir / "labels.json"
+    descriptions_path = gameplay_dir / "descriptions.json"
+    if labels_path.exists():
+        try:
+            labels = json.loads(labels_path.read_text(encoding="utf-8"))
+        except Exception:
+            labels = {}
+    if descriptions_path.exists():
+        try:
+            descriptions = json.loads(descriptions_path.read_text(encoding="utf-8"))
+        except Exception:
+            descriptions = {}
+
+    ordered_entries = []
+    for rel_path, meta in frame_index.items():
+        if not isinstance(meta, dict):
+            continue
+        ordered_entries.append(
+            {
+                "rel_path": rel_path,
+                "timestamp_sec": float(meta.get("timestamp_sec", 0)),
+                "timestamp": str(meta.get("timestamp", "")),
+                "video_filename": str(meta.get("video_filename", "")),
+                "segment": str(meta.get("segment", "")),
+                "label": labels.get(rel_path, ""),
+                "description": descriptions.get(rel_path, ""),
+            }
+        )
+    ordered_entries.sort(key=lambda item: (item["video_filename"], item["timestamp_sec"], item["rel_path"]))
+    if not ordered_entries:
+        return None
+
+    out_md = gameplay_dir / "timeline_summary.md"
+    lines = [
+        "# Gameplay Timeline Summary",
+        "",
+        f"- 样本帧：{len(ordered_entries)}",
+        f"- 前 15 分钟帧数：{sum(1 for item in ordered_entries if item['timestamp_sec'] <= 15 * 60)}",
+        "",
+        "## 标签分布",
+        "",
+    ]
+    distribution = _count_tags({item["rel_path"]: item["label"] for item in ordered_entries if item["label"]})
+    if distribution:
+        for label, count in sorted(distribution.items(), key=lambda pair: (-pair[1], pair[0])):
+            lines.append(f"- {label}: {count}")
+    else:
+        lines.append("- 还没有可用标签")
+
+    current_video = None
+    for item in ordered_entries:
+        if item["video_filename"] != current_video:
+            current_video = item["video_filename"]
+            lines.extend(["", f"## {current_video}", ""])
+        desc = item["description"] or Path(item["rel_path"]).name
+        label = item["label"] or "-"
+        segment = f" [{item['segment']}]" if item["segment"] else ""
+        lines.append(f"- {item['timestamp']} | {label}{segment} | {desc}")
+
+    out_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_md
+
+
 def label_frames(game_dir: Path, force: bool = False, model: str = None,
-                 smart: bool = True, quota_overrides: dict = None) -> dict:
+                 smart: bool = True, quota_overrides: dict = None,
+                 analysis_mode: bool = False) -> dict:
     """AI-label gameplay frames + store screenshots.
 
     smart=True (default): quota-based early stop, only labels until quotas filled
     smart=False: heuristic-first, send everything uncertain to AI
     """
-    mode_label = "smart-quota" if smart else "full"
+    mode_label = "analysis-full" if analysis_mode else ("smart-quota" if smart else "full")
     print(f"\n🏷 Labeling ({mode_label})...")
     frames_dir = game_dir / "gameplay" / "frames"
 
@@ -1064,12 +1584,13 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
 
     need_ai = []
     skipped = 0
-    for img_path in all_frames:
+    ordered_frames = sorted(all_frames, key=lambda path: _frame_sort_key(str(path.relative_to(game_dir))))
+    for img_path in ordered_frames:
         rel = str(img_path.relative_to(game_dir))
         if rel in existing_labels and rel in existing_descs and existing_descs.get(rel) and not force:
             skipped += 1
             continue
-        h_label = _heuristic_label(img_path)
+        h_label = None if analysis_mode else _heuristic_label(img_path)
         if h_label is not None:
             heuristic_results[rel] = h_label
             desc = existing_descs.get(rel) or _default_description(rel, h_label)
@@ -1077,6 +1598,8 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
                 heuristic_descs[rel] = desc
         else:
             need_ai.append((rel, img_path))
+
+    need_ai.sort(key=lambda item: _frame_sort_key(item[0]))
 
     total = len(all_frames) + len(store_frames)
     print(f"   total {total} | cached {skipped} | heuristic {len(heuristic_results)} | need-AI {len(need_ai)}")
@@ -1095,12 +1618,14 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
 
     if ARK_API_KEY and need_ai:
         test_rel, test_img = need_ai[0]
+        image_max_px = 512 if analysis_mode else 256
+        image_detail = "high" if analysis_mode else "low"
         body = json.dumps({
             "model": vision_model,
             "messages": [{"role": "user", "content": [
                 {"type": "image_url",
-                 "image_url": {"url": f"data:image/jpeg;base64,{_resize_for_vision(test_img)}",
-                               "detail": "low"}},
+                 "image_url": {"url": f"data:image/jpeg;base64,{_resize_for_vision(test_img, max_px=image_max_px)}",
+                               "detail": image_detail}},
                 {"type": "text", "text": "Describe this in one word."},
             ]}],
             "max_tokens": 10,
@@ -1114,7 +1639,7 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
         try:
             urllib.request.urlopen(req, timeout=15)
             use_ai = True
-            print(f"   ✓ AI model {vision_model} OK (256px thumb + detail:low)")
+            print(f"   ✓ AI model {vision_model} OK ({image_max_px}px thumb + detail:{image_detail})")
         except Exception as e:
             print(f"   ⚠ AI model unavailable ({e}), heuristic-only")
 
@@ -1141,8 +1666,8 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
                 "model": vision_model,
                 "messages": [{"role": "user", "content": [
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/jpeg;base64,{_resize_for_vision(img_path)}",
-                                   "detail": "low"}},
+                     "image_url": {"url": f"data:image/jpeg;base64,{_resize_for_vision(img_path, max_px=image_max_px)}",
+                                   "detail": image_detail}},
                     {"type": "text",
                      "text": (
                          "你在看一张手机游戏截图。严格只回答 JSON，格式："
@@ -1188,8 +1713,8 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
                 "model": vision_model,
                 "messages": [{"role": "user", "content": [
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/jpeg;base64,{_resize_for_vision(img_path)}",
-                                   "detail": "low"}},
+                     "image_url": {"url": f"data:image/jpeg;base64,{_resize_for_vision(img_path, max_px=image_max_px)}",
+                                   "detail": image_detail}},
                     {"type": "text",
                      "text": (
                          "你在看一张手机游戏截图。严格只回答 JSON，格式："
@@ -1245,14 +1770,22 @@ def label_frames(game_dir: Path, force: bool = False, model: str = None,
     descriptions_path.write_text(json.dumps(descriptions, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
     dist = _count_tags(labels)
-    mode_str = ("smart-quota+AI" if (use_ai and smart)
-                else ("AI+heuristic" if use_ai else "heuristic"))
+    timeline_summary_path = write_timeline_summary(game_dir)
+    mode_str = (
+        "analysis-full+AI"
+        if analysis_mode and use_ai
+        else ("smart-quota+AI" if (use_ai and smart)
+              else ("AI+heuristic" if use_ai else "heuristic"))
+    )
     print(f"\n   ✓ Labeling done ({mode_str})")
     print(f"     AI calls: {ai_calls} | tokens: {total_tokens}")
     print(f"     distribution: {dist}")
-    return {"total": len(labels), "distribution": dist, "mode": mode_str,
-            "ai_calls": ai_calls, "total_tokens": total_tokens,
-            "descriptions_total": sum(1 for v in descriptions.values() if v)}
+    result = {"total": len(labels), "distribution": dist, "mode": mode_str,
+              "ai_calls": ai_calls, "total_tokens": total_tokens,
+              "descriptions_total": sum(1 for v in descriptions.values() if v)}
+    if timeline_summary_path:
+        result["timeline_summary"] = str(timeline_summary_path.relative_to(game_dir))
+    return result
 
 
 def _count_tags(labels: dict) -> dict:
@@ -1378,6 +1911,8 @@ def write_collection_summary(
     frames_root = gameplay_root / "frames"
     labels_path = gameplay_root / "labels.json"
     descriptions_path = gameplay_root / "descriptions.json"
+    frame_index_path = gameplay_root / "frame_index.json"
+    timeline_summary_path = gameplay_root / "timeline_summary.md"
 
     store_counts: dict[str, int] = {}
     for source_dir in sorted(store_root.iterdir()) if store_root.exists() else []:
@@ -1416,6 +1951,10 @@ def write_collection_summary(
         f"- metadata：`{game_dir / 'metadata.json'}`",
         f"- 资源清单：`{resource_list_path}`",
     ]
+    if frame_index_path.exists():
+        lines.append(f"- 帧时间轴索引：`{frame_index_path}`")
+    if timeline_summary_path.exists():
+        lines.append(f"- 时间轴摘要：`{timeline_summary_path}`")
     if project_root is not None:
         lines.append(f"- 项目目录：`{project_root}`")
 
@@ -1434,6 +1973,8 @@ def write_collection_summary(
         f"- labels.json 条目：{labels_total}",
         f"- descriptions.json 条目：{descriptions_total}",
     ])
+    if frame_index_path.exists():
+        lines.append(f"- frame_index.json 条目：{_load_json_len(frame_index_path)}")
 
     stores_meta = metadata.get("stores", {})
     gameplay_meta = metadata.get("gameplay", {})
@@ -1456,6 +1997,17 @@ def write_collection_summary(
         videos = gameplay_meta.get("videos") or []
         if isinstance(videos, list):
             lines.append(f"- 视频条目：{len(videos)}")
+            for item in videos:
+                if not isinstance(item, dict):
+                    continue
+                video_name = item.get("filename", "(unknown)")
+                detected = item.get("video_type", "-")
+                used_mode = item.get("used_mode", item.get("detected_mode", "-"))
+                reason = item.get("detection_reason", "-")
+                duration = item.get("duration_sec", "-")
+                lines.append(
+                    f"  - {video_name} | type={detected} | mode={used_mode} | reason={reason} | duration={duration}"
+                )
     if isinstance(labels_meta, dict) and labels_meta:
         lines.extend(["", "## 标签链路", ""])
         lines.append(f"- 模式：{labels_meta.get('mode', '-')}")
@@ -1562,11 +2114,16 @@ def main():
     parser.add_argument("--model", choices=["lite", "heavy"], default="lite",
                         help="vision model: lite=token-saving (default), heavy=high-precision")
     parser.add_argument("--keep-video", action="store_true", help="keep source mp4")
+    parser.add_argument(
+        "--analysis",
+        action="store_true",
+        help="force walkthrough-style dense timeline extraction + full gameplay labeling",
+    )
 
     parser.add_argument("--no-smart", action="store_true",
                         help="legacy: scene-detect full frames (no dedup)")
     parser.add_argument("--scene", action="store_true",
-                        help="recommended: scene-detect + pHash dedup (default = sparse sampling)")
+                        help="force trailer-style scene-detect + pHash dedup")
     parser.add_argument("--frame-interval", type=int, default=5,
                         help="sparse mode: 1 frame per N seconds (default 5)")
 
@@ -1630,8 +2187,9 @@ def main():
                            for cat in SCENE_QUOTA
                            if getattr(args, cat.replace("-", "_"), None) is not None}
         label_meta = label_frames(game_dir, force=args.force, model=vision_model,
-                                  smart=not args.no_smart,
-                                  quota_overrides=quota_overrides or None)
+                                  smart=not args.no_smart and not args.analysis,
+                                  quota_overrides=quota_overrides or None,
+                                  analysis_mode=args.analysis)
         metadata["labels"] = label_meta
     else:
         # P0: store screenshots
@@ -1652,6 +2210,7 @@ def main():
                 smart=smart,
                 frame_interval=args.frame_interval,
                 scene_mode=scene_mode,
+                analysis_mode=args.analysis,
                 manual_targets=args.video,
             )
             metadata["gameplay"] = gp_meta
@@ -1663,8 +2222,9 @@ def main():
                                for cat in SCENE_QUOTA
                                if getattr(args, cat.replace("-", "_"), None) is not None}
             label_meta = label_frames(game_dir, force=args.force, model=vision_model,
-                                      smart=smart,
-                                      quota_overrides=quota_overrides or None)
+                                      smart=smart and not args.analysis,
+                                      quota_overrides=quota_overrides or None,
+                                      analysis_mode=args.analysis)
             metadata["labels"] = label_meta
 
     # Persist metadata
