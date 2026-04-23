@@ -1315,6 +1315,142 @@ def emit_resource_list(game_dir: Path, project_root: Path,
     print(f"   ✓ resource list → {out_md}  ({len(rows)} rows)")
 
 
+def _count_files_by_suffix(root: Path, suffixes: tuple[str, ...]) -> int:
+    if not root.exists():
+        return 0
+    return sum(1 for path in root.rglob("*") if path.is_file() and path.suffix.lower() in suffixes)
+
+
+def _load_json_len(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    return len(payload) if isinstance(payload, dict) else 0
+
+
+def write_collection_summary(
+    game_dir: Path,
+    project_root: Path | None,
+    game_name: str,
+    metadata: dict[str, object],
+    out_md: Path,
+    resource_list_path: Path,
+) -> None:
+    store_root = game_dir / "store"
+    gameplay_root = game_dir / "gameplay"
+    videos_root = gameplay_root / "videos"
+    frames_root = gameplay_root / "frames"
+    labels_path = gameplay_root / "labels.json"
+    descriptions_path = gameplay_root / "descriptions.json"
+
+    store_counts: dict[str, int] = {}
+    for source_dir in sorted(store_root.iterdir()) if store_root.exists() else []:
+        if source_dir.is_dir():
+            store_counts[source_dir.name] = _count_files_by_suffix(
+                source_dir,
+                (".jpg", ".jpeg", ".png", ".webp", ".mp4"),
+            )
+
+    video_count = _count_files_by_suffix(videos_root, (".mp4", ".webm", ".mkv", ".mov"))
+    frame_count = _count_files_by_suffix(frames_root, (".jpg", ".jpeg", ".png"))
+    labels_total = _load_json_len(labels_path)
+    descriptions_total = _load_json_len(descriptions_path)
+
+    missing: list[str] = []
+    if not store_counts:
+        missing.append("没有抓到任何商店素材")
+    else:
+        for source in ("appstore", "googleplay", "steam"):
+            if store_counts.get(source, 0) == 0:
+                missing.append(f"{source} 没有抓到素材")
+    if video_count == 0:
+        missing.append("没有下载到 gameplay 视频")
+    if frame_count == 0:
+        missing.append("没有抽到 gameplay 关键帧")
+    if labels_total == 0:
+        missing.append("没有生成 labels.json")
+    if descriptions_total == 0:
+        missing.append("没有生成 descriptions.json")
+
+    lines = [
+        f"# 采集摘要：{game_name}",
+        "",
+        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 素材目录：`{game_dir}`",
+        f"- metadata：`{game_dir / 'metadata.json'}`",
+        f"- 资源清单：`{resource_list_path}`",
+    ]
+    if project_root is not None:
+        lines.append(f"- 项目目录：`{project_root}`")
+
+    lines.extend([
+        "",
+        "## 抓到了什么",
+        "",
+        f"- 商店来源数量：{len(store_counts)}",
+    ])
+    if store_counts:
+        for source, count in store_counts.items():
+            lines.append(f"- {source}：{count} 个文件")
+    lines.extend([
+        f"- gameplay 视频：{video_count} 个",
+        f"- gameplay 关键帧：{frame_count} 张",
+        f"- labels.json 条目：{labels_total}",
+        f"- descriptions.json 条目：{descriptions_total}",
+    ])
+
+    stores_meta = metadata.get("stores", {})
+    gameplay_meta = metadata.get("gameplay", {})
+    labels_meta = metadata.get("labels", {})
+    if isinstance(stores_meta, dict) and stores_meta:
+        lines.extend(["", "## 来源记录", ""])
+        for source, info in stores_meta.items():
+            if isinstance(info, dict):
+                title = (
+                    info.get("trackName")
+                    or info.get("title")
+                    or info.get("name")
+                    or "(未命名)"
+                )
+                lines.append(f"- {source}：{title}")
+    if isinstance(gameplay_meta, dict) and gameplay_meta:
+        lines.extend(["", "## 视频链路", ""])
+        total_frames = gameplay_meta.get("total_frames", frame_count)
+        lines.append(f"- 总关键帧：{total_frames}")
+        videos = gameplay_meta.get("videos") or []
+        if isinstance(videos, list):
+            lines.append(f"- 视频条目：{len(videos)}")
+    if isinstance(labels_meta, dict) and labels_meta:
+        lines.extend(["", "## 标签链路", ""])
+        lines.append(f"- 模式：{labels_meta.get('mode', '-')}")
+        lines.append(f"- 标签总数：{labels_meta.get('total', labels_total)}")
+        lines.append(f"- 描述总数：{labels_meta.get('descriptions_total', descriptions_total)}")
+
+    lines.extend(["", "## 还缺什么", ""])
+    if missing:
+        for item in missing:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- 关键素材已经齐全。")
+
+    lines.extend(["", "## 下一步建议", ""])
+    if frame_count == 0 and video_count == 0:
+        lines.append("- 如果自动搜不到视频，下一次直接加 `--video <URL_OR_ID>`。")
+    if descriptions_total == 0:
+        lines.append("- 如果你需要中文画面描述，请确认 `ARK_API_KEY` 已配置并重新加 `--label`。")
+    if store_counts.get("googleplay", 0) == 0:
+        lines.append("- 如果目标是 Google Play，建议显式传 `--gplay-id`。")
+    if not missing:
+        lines.append("- 可以直接把这批素材交给 `game-review` 或 `game-ppt-master` 继续使用。")
+
+    out_md.parent.mkdir(parents=True, exist_ok=True)
+    out_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"   ✓ summary → {out_md}")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1508,8 +1644,16 @@ def main():
         meta_dir = project_root / "images" / "_game_assets_meta"
     else:
         meta_dir = game_dir / "meta"
-    emit_resource_list(game_dir, project_root, game_name,
-                       meta_dir / f"{_sanitize(game_name)}.image_resource_list.md")
+    resource_list_path = meta_dir / f"{_sanitize(game_name)}.image_resource_list.md"
+    emit_resource_list(game_dir, project_root, game_name, resource_list_path)
+    write_collection_summary(
+        game_dir,
+        project_root,
+        game_name,
+        metadata,
+        meta_dir / f"{_sanitize(game_name)}.collection_summary.md",
+        resource_list_path,
+    )
 
     total_files = sum(1 for _ in game_dir.rglob("*")
                       if _.is_file() and _.name != "metadata.json")

@@ -110,6 +110,14 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
 - `yt-dlp` / `ffmpeg`
 - `google_play_scraper`
 
+跑完采集后，还会自动生成一份“结果单”，告诉你：
+
+- 抓到了哪些商店图
+- 抓到了几个视频和多少张关键帧
+- 标签和中文描述有没有生成
+- 还缺什么
+- 下一步建议做什么
+
 ## 输出约定
 
 ```text
@@ -124,6 +132,7 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
     descriptions.json
   metadata.json
   meta/<game>.image_resource_list.md
+  meta/<game>.collection_summary.md
 ```
 
 如果是 `--project <project_root>`，则落到 `<project_root>/images/_game_assets/<game>/...`，兼容 `game-ppt-master` 现有项目结构。
