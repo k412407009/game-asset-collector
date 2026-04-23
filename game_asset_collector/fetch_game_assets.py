@@ -1274,7 +1274,7 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
                 "-y", "-loglevel", "warning",
             ]
 
-        if not analysis_mode:
+        if extraction_mode != "analysis":
             rc, output = _run_cmd(cmd_ff, timeout=120)
             if rc == -2:
                 print("   ⚠ ffmpeg not on PATH. Install: `winget install ffmpeg` / `brew install ffmpeg`")
@@ -1340,6 +1340,20 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
     if frame_index_path:
         result["frame_index"] = str(frame_index_path.relative_to(game_dir))
     return result
+
+
+def gameplay_uses_analysis_mode(gameplay_meta: dict | None, game_dir: Path | None = None) -> bool:
+    if isinstance(gameplay_meta, dict):
+        if gameplay_meta.get("frame_index"):
+            return True
+        videos = gameplay_meta.get("videos") or []
+        if any((video or {}).get("used_mode") == "analysis" for video in videos if isinstance(video, dict)):
+            return True
+        if gameplay_meta.get("mode") == "analysis":
+            return True
+    if game_dir is not None and (game_dir / "gameplay" / "frame_index.json").exists():
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -2186,10 +2200,11 @@ def main():
         quota_overrides = {cat: getattr(args, cat.replace("-", "_"))
                            for cat in SCENE_QUOTA
                            if getattr(args, cat.replace("-", "_"), None) is not None}
+        effective_analysis_mode = args.analysis or gameplay_uses_analysis_mode({}, game_dir=game_dir)
         label_meta = label_frames(game_dir, force=args.force, model=vision_model,
-                                  smart=not args.no_smart and not args.analysis,
+                                  smart=not args.no_smart and not effective_analysis_mode,
                                   quota_overrides=quota_overrides or None,
-                                  analysis_mode=args.analysis)
+                                  analysis_mode=effective_analysis_mode)
         metadata["labels"] = label_meta
     else:
         # P0: store screenshots
@@ -2199,6 +2214,7 @@ def main():
 
         smart = not args.no_smart
         scene_mode = bool(args.scene)
+        effective_analysis_mode = bool(args.analysis)
 
         # P1: gameplay video frames
         if not args.store_only:
@@ -2214,6 +2230,7 @@ def main():
                 manual_targets=args.video,
             )
             metadata["gameplay"] = gp_meta
+            effective_analysis_mode = effective_analysis_mode or gameplay_uses_analysis_mode(gp_meta, game_dir=game_dir)
 
         # P1+: AI labeling
         if args.label:
@@ -2222,9 +2239,9 @@ def main():
                                for cat in SCENE_QUOTA
                                if getattr(args, cat.replace("-", "_"), None) is not None}
             label_meta = label_frames(game_dir, force=args.force, model=vision_model,
-                                      smart=smart and not args.analysis,
+                                      smart=smart and not effective_analysis_mode,
                                       quota_overrides=quota_overrides or None,
-                                      analysis_mode=args.analysis)
+                                      analysis_mode=effective_analysis_mode)
             metadata["labels"] = label_meta
 
     # Persist metadata

@@ -151,3 +151,74 @@ def test_write_timeline_summary_uses_frame_index_and_labels(tmp_path) -> None:
     text = output.read_text(encoding="utf-8")
     assert "Gameplay Timeline Summary" in text
     assert "00:04 | tutorial [intro] | 开场引导点击教程" in text
+
+
+def test_gameplay_uses_analysis_mode_detects_auto_analysis_video(tmp_path) -> None:
+    game_dir = tmp_path / "demo-game"
+    (game_dir / "gameplay").mkdir(parents=True)
+    (game_dir / "gameplay" / "frame_index.json").write_text("{}", encoding="utf-8")
+
+    assert fetch_game_assets.gameplay_uses_analysis_mode(
+        {
+            "mode": "auto",
+            "videos": [
+                {"used_mode": "analysis"},
+                {"used_mode": "scene"},
+            ],
+        },
+        game_dir=game_dir,
+    )
+
+
+def test_fetch_gameplay_auto_analysis_does_not_run_ffmpeg_sparse_branch(monkeypatch, tmp_path) -> None:
+    game_dir = tmp_path / "demo-game"
+    video_dir = game_dir / "gameplay" / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    video_path = video_dir / "Demo Walkthrough__ABCDEFGHIJK.mp4"
+    video_path.write_bytes(b"fake-video")
+
+    def fake_run_cmd(cmd, timeout=0):
+        if cmd and cmd[0] == "ffmpeg":
+            raise AssertionError("ffmpeg command branch should not run for auto analysis mode")
+        return 0, ""
+
+    def fake_extract(vpath, frames_dir):
+        frame_path = frames_dir / "frame_t000004_0001.jpg"
+        frame_path.write_bytes(b"x")
+        return [
+            {
+                "relative_path": str(frame_path),
+                "timestamp_sec": 4,
+                "timestamp": "00:04",
+                "interval_sec": 4,
+                "segment": "intro",
+            }
+        ]
+
+    monkeypatch.setattr(fetch_game_assets, "_run_cmd", fake_run_cmd)
+    monkeypatch.setattr(
+        fetch_game_assets,
+        "detect_video_strategy",
+        lambda _path: {
+            "video_type": "walkthrough",
+            "extraction_mode": "analysis",
+            "reason": "title-keyword",
+            "duration_sec": 120.0,
+            "probe_samples": 2,
+            "portrait_ratio": 1.0,
+            "uniqueness_ratio": 0.5,
+        },
+    )
+    monkeypatch.setattr(fetch_game_assets, "_extract_analysis_frames", fake_extract)
+    monkeypatch.setattr(fetch_game_assets, "deduplicate_frames", lambda *args, **kwargs: 0)
+
+    result = fetch_game_assets.fetch_gameplay(
+        "Demo Walkthrough",
+        game_dir,
+        smart=True,
+        keep_video=True,
+    )
+
+    assert result["videos"][0]["used_mode"] == "analysis"
+    assert result["total_frames"] == 1
+    assert result["frame_index"] == "gameplay/frame_index.json"
