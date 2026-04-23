@@ -35,6 +35,17 @@ def test_build_doctor_report_exposes_core_fields() -> None:
     assert "python_ok" in report
     assert "commands" in report
     assert "keys" in report
+    assert "key_sources" in report
+
+
+def test_env_lookup_accepts_legacy_tavily_key_case(monkeypatch) -> None:
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setenv("Tavily_API_Key", "demo-key")
+
+    value, source = fetch_game_assets._find_env_value("TAVILY_API_KEY")
+
+    assert value == "demo-key"
+    assert source == "Tavily_API_Key"
 
 
 def test_write_collection_summary_creates_human_readable_report(tmp_path) -> None:

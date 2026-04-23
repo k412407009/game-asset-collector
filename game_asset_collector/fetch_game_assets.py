@@ -22,9 +22,10 @@ Usage (legacy standalone mode, asset library style):
 
 Inputs:
   - .env at game-asset-collector repo root for TAVILY_API_KEY / ARK_API_KEY
-    (also falls back to current process env vars, sibling game-ppt-master/.env,
-     sibling ppt-master/.env,
-     and sibling personal-assistant/.baoyu-skills/.env for local compatibility)
+    (key lookup is case-insensitive for local compatibility; also falls back to
+     current process env vars, sibling game-ppt-master/.env, sibling
+     ppt-master/.env, sibling game-review/.env, and sibling
+     personal-assistant/.baoyu-skills/.env)
   - System: yt-dlp, ffmpeg on PATH (install separately)
   - Optional Python dep: google-play-scraper for the GP path
 
@@ -94,6 +95,7 @@ def _iter_dotenv_paths() -> list[Path]:
     workspace_root = COLLECTOR_ROOT.parent
     candidates.append(workspace_root / "game-ppt-master" / ".env")
     candidates.append(workspace_root / "ppt-master" / ".env")
+    candidates.append(workspace_root / "game-review" / ".env")
     candidates.append(workspace_root / "personal-assistant" / ".baoyu-skills" / ".env")
 
     deduped: list[Path] = []
@@ -127,8 +129,23 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 
+def _find_env_value(name: str) -> tuple[str, str | None]:
+    direct = os.environ.get(name, "").strip()
+    if direct:
+        return direct, name
+    target = name.lower()
+    for key, value in os.environ.items():
+        value = value.strip()
+        if value and key.lower() == target:
+            return value, key
+    return "", None
+
+
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    value, _source = _find_env_value(name)
+    if value:
+        return value
+    return default.strip()
 
 
 TAVILY_API_KEY = _env("TAVILY_API_KEY")
@@ -204,6 +221,10 @@ def _find_recommended_python() -> tuple[str, str] | None:
 
 
 def _build_doctor_report() -> dict:
+    tavily_value, tavily_source = _find_env_value("TAVILY_API_KEY")
+    ark_value, ark_source = _find_env_value("ARK_API_KEY")
+    if not ark_value:
+        ark_value, ark_source = _find_env_value("VOLCENGINE_API_KEY")
     env_paths = [str(path) for path in _iter_dotenv_paths() if path.exists()]
     report = {
         "repo_root": str(COLLECTOR_ROOT),
@@ -211,8 +232,12 @@ def _build_doctor_report() -> dict:
         "python_ok": sys.version_info >= (3, 10),
         "env_files": env_paths,
         "keys": {
-            "TAVILY_API_KEY": bool(TAVILY_API_KEY),
-            "ARK_API_KEY": bool(ARK_API_KEY),
+            "TAVILY_API_KEY": bool(tavily_value),
+            "ARK_API_KEY": bool(ark_value),
+        },
+        "key_sources": {
+            "TAVILY_API_KEY": tavily_source,
+            "ARK_API_KEY": ark_source,
         },
         "commands": {
             "yt-dlp": shutil.which("yt-dlp"),
@@ -250,14 +275,22 @@ def _run_doctor() -> int:
         _line("WARN", ".env", "未找到 .env 文件，将只读取当前 shell 环境变量")
         warnings.append("未找到 .env 文件")
 
+    tavily_source = report["key_sources"]["TAVILY_API_KEY"]
     if report["keys"]["TAVILY_API_KEY"]:
-        _line("OK", "TAVILY_API_KEY", "已配置（网页抓取兜底可用）")
+        detail = "已配置（网页抓取兜底可用）"
+        if tavily_source and tavily_source != "TAVILY_API_KEY":
+            detail += f"；当前通过 `{tavily_source}` 读取，建议以后统一写成 `TAVILY_API_KEY`"
+        _line("OK", "TAVILY_API_KEY", detail)
     else:
         _line("WARN", "TAVILY_API_KEY", "未配置，商店页文本兜底会降级")
         warnings.append("未配置 TAVILY_API_KEY")
 
+    ark_source = report["key_sources"]["ARK_API_KEY"]
     if report["keys"]["ARK_API_KEY"]:
-        _line("OK", "ARK_API_KEY", "已配置（AI 标签与中文描述可用）")
+        detail = "已配置（AI 标签与中文描述可用）"
+        if ark_source and ark_source != "ARK_API_KEY":
+            detail += f"；当前通过 `{ark_source}` 读取"
+        _line("OK", "ARK_API_KEY", detail)
     else:
         _line("WARN", "ARK_API_KEY", "未配置，将退化成启发式标签")
         warnings.append("未配置 ARK_API_KEY")

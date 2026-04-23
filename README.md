@@ -110,6 +110,11 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
 - `yt-dlp` / `ffmpeg`
 - `google_play_scraper`
 
+补充说明：
+
+- 现在兼容历史写法 `Tavily_API_Key` / `Tavily_API_KEY`
+- 但对外仍然建议统一写成 `TAVILY_API_KEY`，避免团队里有人误判成“没配”
+
 跑完采集后，还会自动生成一份“结果单”，告诉你：
 
 - 抓到了哪些商店图
