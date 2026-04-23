@@ -76,6 +76,21 @@ cd /Users/ahs/Desktop/Git/game-asset-collector
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+cp .env.example .env
+```
+
+推荐做法：
+
+- 如果你把它当成独立仓给同事用，**就在这个仓库根目录自己建一份 `.env`**
+- 最简单就是：`cp .env.example .env`，然后把 key 填进去
+- 不建议靠“记得去别的仓库 copy 一份”这种人工流程
+- 现在代码虽然会回退读取同级 `game-ppt-master/.env`、`game-review/.env`，但那是兼容逻辑，不是首选
+
+这个采集器最少建议填两项：
+
+```env
+TAVILY_API_KEY=...
+ARK_API_KEY=...
 ```
 
 先体检一遍环境：

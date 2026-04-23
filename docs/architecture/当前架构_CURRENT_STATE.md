@@ -31,7 +31,13 @@ game-review bridge
   2. `game-asset-collector/.env`
   3. `../game-ppt-master/.env`
   4. `../ppt-master/.env`
-  5. `../personal-assistant/.baoyu-skills/.env`
+  5. `../game-review/.env`
+  6. `../personal-assistant/.baoyu-skills/.env`
+
+- 但推荐顺序不是“随便哪份都行”，而是：
+  1. 独立使用时，优先在 `game-asset-collector/.env` 自己放一份
+  2. 三仓联动时，可以临时复用同级仓的 `.env`
+  3. 对外给同事时，最好统一让大家从 `.env.example` 复制生成本仓 `.env`
 
 ## 当前已确认的优势
 
