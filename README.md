@@ -172,6 +172,20 @@ python scripts/fetch_game_assets.py "Narcos: Cartel Wars" \
 - 10 到 30 分钟：每 `8` 秒 1 帧
 - 30 分钟后：每 `15` 秒 1 帧
 
+如果你要强制按固定密度抽 walkthrough 时间轴，可以叠加：
+
+```bash
+python scripts/fetch_game_assets.py "Fight Tycoon" \
+  --project /abs/path/to/project \
+  --gameplay-only \
+  --video https://www.youtube.com/watch?v=CWABlP9RhCA \
+  --analysis \
+  --analysis-interval 2 \
+  --label
+```
+
+这会对 analysis 模式改成全程 `2` 秒 1 帧，适合做逐镜头流程复盘。
+
 `scene` 模式：
 
 - 用 `ffmpeg select='gt(scene,threshold)'` 按场景切换抽帧
@@ -198,6 +212,8 @@ python scripts/fetch_game_assets.py "Narcos: Cartel Wars" \
 
 ## 输出约定
 
+每个游戏的素材目录约定：
+
 ```text
 <out>/<game>/
   store/
@@ -216,3 +232,42 @@ python scripts/fetch_game_assets.py "Narcos: Cartel Wars" \
 ```
 
 如果是 `--project <project_root>`，则落到 `<project_root>/images/_game_assets/<game>/...`，兼容 `game-ppt-master` 现有项目结构。
+
+## Asset Library 目录约定（2026-04-25 起）
+
+`game_assets_library/` 是这个仓库的"长期素材仓库"，**所有游戏资产**最终都应该落在这里。
+约定分两类：
+
+```text
+game_assets_library/
+  by_game/                          ← 推荐：单游戏权威素材
+    Last-Outbreak/
+      store/  gameplay/  metadata.json
+      _repro/                       ← 同游戏的历史复现快照（可清理）
+        gameplay_only/
+        ppt_master/
+        store_only/
+    Last-Beacon-Survival/
+  reference_packs/                  ← 某次研究/对标的多游戏包（带日期）
+    2026-04-23_crime_reference_pack_auto/
+    2026-04-23_narco_reference_pack/
+    2026-04-24_crazy_plants_reference_pack/
+```
+
+什么时候用哪个：
+
+- **单游戏长期素材** → `by_game/<GameName>/`
+  ```bash
+  python scripts/fetch_game_assets.py "Last Outbreak" \
+    --out ./game_assets_library/by_game \
+    --gameplay-only --video <id>
+  ```
+- **多游戏研究包** → `reference_packs/<日期>_<主题>_reference_pack/`
+  ```bash
+  python scripts/fetch_game_assets.py "Crazy Plants TD" \
+    --out ./game_assets_library/reference_packs/2026-04-25_td_reference_pack \
+    --gameplay-only --video <id>
+  ```
+
+评审产出（`.docx` / `.xlsx` / `review.json`）**不放这里**，归 `game-review/projects/`。
+评审项目要看图时，由 `game-review/projects/<Game>/raw_assets/<game_slug>` 软链接回 `by_game/<Game>/`。
