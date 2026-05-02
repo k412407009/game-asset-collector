@@ -59,10 +59,15 @@ game-asset-collector/
   game_asset_collector/
     __init__.py
     fetch_game_assets.py
+    reference_pack.py
+    scys_course.py
   scripts/
     fetch_game_assets.py
+    build_reference_pack.py
+    fetch_scys_course.py
   docs/
     product/采集器概览_COLLECTOR_OVERVIEW.md
+    product/生财课程采集_SCYS_COURSE_CAPTURE.md
     architecture/当前架构_CURRENT_STATE.md
   tests/
     test_smoke.py
@@ -78,6 +83,12 @@ source .venv/bin/activate
 pip install -e .
 cp .env.example .env
 ```
+
+安装后会提供三个命令：
+
+- `game-asset-collector`：商店截图、视频抽帧、标签和描述采集
+- `game-asset-reference-pack`：给多游戏研究包生成业务分类索引和软链接目录
+- `scys-course-capture`：采集当前 Chrome 登录账号有权限访问的 SCYS 课程章节
 
 推荐做法：
 
@@ -117,6 +128,25 @@ python scripts/fetch_game_assets.py "Last Beacon: Survival" \
   --label
 ```
 
+`--video` 可以重复传入，支持：
+
+- YouTube 11 位 ID，例如 `2l4DO5Z10jo`
+- YouTube 完整 URL，例如 `https://www.youtube.com/watch?v=CWABlP9RhCA`
+- Bilibili BV 号，例如 `BV1xx411c7mD`
+- Bilibili 完整 URL，例如 `https://www.bilibili.com/video/BV1xx411c7mD/`
+
+```bash
+# 手动指定 Bilibili 视频并按时间轴抽帧
+python scripts/fetch_game_assets.py "PlanCoach" \
+  --out /tmp/game-assets \
+  --gameplay-only \
+  --video "https://www.bilibili.com/video/BV1n4Ytz5EnZ/" \
+  --video "BV14hYBzHErr" \
+  --analysis \
+  --analysis-interval 5 \
+  --label
+```
+
 ```bash
 # 默认自动判别视频类型：
 # walkthrough / gameplay / guide -> analysis
@@ -149,6 +179,37 @@ python scripts/fetch_game_assets.py "Narcos: Cartel Wars" \
 
 - 现在兼容历史写法 `Tavily_API_Key` / `Tavily_API_KEY`
 - 但对外仍然建议统一写成 `TAVILY_API_KEY`，避免团队里有人误判成“没配”
+- 手动视频入口优先走 `--video`，自动搜索则先用 YouTube `ytsearch`，未抓满
+  `--max-videos` 时再用 Bilibili `bilisearch` 补位。
+
+## 跨项目调用
+
+这台机器已经注册了全局 Codex skill：`game-asset-collector`（显示名：
+“游戏采集器”）。在其他计划、评审项目或 PPT 项目里，可以直接说：
+
+- `用游戏采集器抓这个游戏素材`
+- `用采集器抓 B 站视频抽帧`
+- `跑 fetch_game_assets 生成 labels 和 image_resource_list`
+
+触发后应读取 `~/.agents/skills/game-asset-collector/SKILL.md`，再调用本仓库的
+`scripts/fetch_game_assets.py`。本仓仍然是抓取、抽帧、标注行为的事实源。
+
+## SCYS 课程页面采集
+
+`scys_course` 是独立的页面采集辅助能力，用于用户已经登录并有权限访问的
+`scys.com` 课程章节。项目内统一写作 `SCYS`，如果口头写成 `SYCS`，指的也是
+这个 `scys.com` 入口。
+
+先在 Chrome 打开课程章节正文，再运行：
+
+```bash
+python scripts/fetch_scys_course.py "https://scys.com/course/detail/148?chapterId=9614"
+```
+
+输出默认落在 `collected_sources/scys/`，其中会有接口包装、原始 JSON、章节
+Markdown / 纯文本、资源清单和已下载图片。这个目录已加入 `.gitignore`，不要
+把课程原文或签名资源 URL 提交到 Git。详见
+`docs/product/生财课程采集_SCYS_COURSE_CAPTURE.md`。
 
 ## 视频抽帧模式
 
@@ -268,6 +329,12 @@ game_assets_library/
     --out ./game_assets_library/reference_packs/2026-04-25_td_reference_pack \
     --gameplay-only --video <id>
   ```
+  采完多个游戏后，可以为这个研究包生成业务分类索引：
+  ```bash
+  python scripts/build_reference_pack.py ./game_assets_library/reference_packs/2026-04-25_td_reference_pack
+  ```
+  生成内容包括 `index/reference_pack_index.json`、
+  `index/资产索引_REFERENCE_INDEX.md` 和 `packaged/` 下的分类软链接目录。
 
 评审产出（`.docx` / `.xlsx` / `review.json`）**不放这里**，归 `game-review/projects/`。
 评审项目要看图时，由 `game-review/projects/<Game>/raw_assets/<game_slug>` 软链接回 `by_game/<Game>/`。

@@ -869,9 +869,12 @@ def _format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def _analysis_segments(duration_sec: float) -> list[dict[str, float | int | str]]:
+def _analysis_segments(duration_sec: float, fixed_interval_sec: int | None = None) -> list[dict[str, float | int | str]]:
     if duration_sec <= 0:
         return []
+    if fixed_interval_sec is not None:
+        interval = max(1, int(fixed_interval_sec))
+        return [{"label": "full", "start": 0.0, "end": duration_sec, "interval": interval}]
     if duration_sec <= 300:
         return [{"label": "full", "start": 0.0, "end": duration_sec, "interval": 2}]
 
@@ -902,14 +905,18 @@ def _analysis_segments(duration_sec: float) -> list[dict[str, float | int | str]
     return segments
 
 
-def _extract_analysis_frames(video_path: Path, frames_dir: Path) -> list[dict[str, object]]:
+def _extract_analysis_frames(video_path: Path, frames_dir: Path,
+                             fixed_interval_sec: int | None = None) -> list[dict[str, object]]:
     duration_sec = _probe_video_duration(video_path)
     if not duration_sec:
         return []
 
     entries: list[dict[str, object]] = []
     counter = 1
-    for seg_index, segment in enumerate(_analysis_segments(duration_sec), start=1):
+    for seg_index, segment in enumerate(
+        _analysis_segments(duration_sec, fixed_interval_sec=fixed_interval_sec),
+        start=1,
+    ):
         start_sec = float(segment["start"])
         end_sec = float(segment["end"])
         interval_sec = int(segment["interval"])
@@ -1133,6 +1140,7 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
                    smart: bool = True, frame_interval: int = 5,
                    scene_mode: bool = False,
                    analysis_mode: bool = False,
+                   analysis_interval: int | None = None,
                    manual_targets: list[str] | None = None) -> dict:
     """yt-dlp YouTube/Bilibili search → download → ffmpeg frame extraction.
 
@@ -1142,7 +1150,10 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
     """
     auto_mode = smart and not analysis_mode and not scene_mode
     if analysis_mode:
-        mode_str = "analysis-timeline (forced)"
+        if analysis_interval:
+            mode_str = f"analysis-timeline {analysis_interval}s/frame (forced)"
+        else:
+            mode_str = "analysis-timeline (forced)"
     elif scene_mode:
         mode_str = f"scene-detect+dedup th{scene_threshold} (forced)"
     elif smart:
@@ -1240,7 +1251,13 @@ def fetch_gameplay(game_name: str, game_dir: Path, max_videos: int = 3,
 
         if extraction_mode == "analysis":
             print(f"   🔍 analysis extract: {vpath.name[:60]}...")
-            extracted_entries = _extract_analysis_frames(vpath, vframes_dir)
+            if analysis_interval:
+                print(f"      using fixed analysis interval: {analysis_interval}s/frame")
+            extracted_entries = _extract_analysis_frames(
+                vpath,
+                vframes_dir,
+                fixed_interval_sec=analysis_interval,
+            )
             extracted = sorted(vframes_dir.glob("*.jpg"))
             for entry in extracted_entries:
                 entry["video_filename"] = vpath.name
@@ -2133,6 +2150,12 @@ def main():
         action="store_true",
         help="force walkthrough-style dense timeline extraction + full gameplay labeling",
     )
+    parser.add_argument(
+        "--analysis-interval",
+        type=int,
+        default=None,
+        help="when analysis mode is used, override the adaptive timeline cadence with a fixed 1 frame per N seconds",
+    )
 
     parser.add_argument("--no-smart", action="store_true",
                         help="legacy: scene-detect full frames (no dedup)")
@@ -2161,6 +2184,8 @@ def main():
                         help="scene-detect threshold (default 0.3)")
 
     args = parser.parse_args()
+    if args.analysis_interval is not None and args.analysis_interval < 1:
+        parser.error("--analysis-interval must be >= 1")
 
     if args.doctor:
         return _run_doctor()
@@ -2227,6 +2252,7 @@ def main():
                 frame_interval=args.frame_interval,
                 scene_mode=scene_mode,
                 analysis_mode=args.analysis,
+                analysis_interval=args.analysis_interval,
                 manual_targets=args.video,
             )
             metadata["gameplay"] = gp_meta

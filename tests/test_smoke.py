@@ -92,6 +92,14 @@ def test_analysis_segments_prioritize_dense_intro() -> None:
     assert segments[1]["interval"] == 8
 
 
+def test_analysis_segments_accept_fixed_interval_override() -> None:
+    segments = fetch_game_assets._analysis_segments(762.0, fixed_interval_sec=2)
+
+    assert segments == [
+        {"label": "full", "start": 0.0, "end": 762.0, "interval": 2}
+    ]
+
+
 def test_decide_video_type_prefers_walkthrough_for_long_gameplay_signal() -> None:
     video_type, reason = fetch_game_assets._decide_video_type(
         title="Narco Empire Gameplay Walkthrough (Android)",
@@ -182,7 +190,7 @@ def test_fetch_gameplay_auto_analysis_does_not_run_ffmpeg_sparse_branch(monkeypa
             raise AssertionError("ffmpeg command branch should not run for auto analysis mode")
         return 0, ""
 
-    def fake_extract(vpath, frames_dir):
+    def fake_extract(vpath, frames_dir, fixed_interval_sec=None):
         frame_path = frames_dir / "frame_t000004_0001.jpg"
         frame_path.write_bytes(b"x")
         return [
@@ -222,3 +230,58 @@ def test_fetch_gameplay_auto_analysis_does_not_run_ffmpeg_sparse_branch(monkeypa
     assert result["videos"][0]["used_mode"] == "analysis"
     assert result["total_frames"] == 1
     assert result["frame_index"] == "gameplay/frame_index.json"
+
+
+def test_fetch_gameplay_passes_analysis_interval_override(monkeypatch, tmp_path) -> None:
+    game_dir = tmp_path / "demo-game"
+    video_dir = game_dir / "gameplay" / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    video_path = video_dir / "Demo Walkthrough__ABCDEFGHIJK.mp4"
+    video_path.write_bytes(b"fake-video")
+
+    def fake_run_cmd(cmd, timeout=0):
+        if cmd and cmd[0] == "ffmpeg":
+            raise AssertionError("ffmpeg command branch should not run for analysis mode")
+        return 0, ""
+
+    def fake_extract(vpath, frames_dir, fixed_interval_sec=None):
+        assert fixed_interval_sec == 2
+        frame_path = frames_dir / "frame_t000002_0001.jpg"
+        frame_path.write_bytes(b"x")
+        return [
+            {
+                "relative_path": str(frame_path),
+                "timestamp_sec": 2,
+                "timestamp": "00:02",
+                "interval_sec": 2,
+                "segment": "full",
+            }
+        ]
+
+    monkeypatch.setattr(fetch_game_assets, "_run_cmd", fake_run_cmd)
+    monkeypatch.setattr(
+        fetch_game_assets,
+        "detect_video_strategy",
+        lambda _path: {
+            "video_type": "walkthrough",
+            "extraction_mode": "analysis",
+            "reason": "title-keyword",
+            "duration_sec": 120.0,
+            "probe_samples": 2,
+            "portrait_ratio": 1.0,
+            "uniqueness_ratio": 0.5,
+        },
+    )
+    monkeypatch.setattr(fetch_game_assets, "_extract_analysis_frames", fake_extract)
+    monkeypatch.setattr(fetch_game_assets, "deduplicate_frames", lambda *args, **kwargs: 0)
+
+    result = fetch_game_assets.fetch_gameplay(
+        "Demo Walkthrough",
+        game_dir,
+        smart=True,
+        keep_video=True,
+        analysis_interval=2,
+    )
+
+    assert result["videos"][0]["used_mode"] == "analysis"
+    assert result["total_frames"] == 1

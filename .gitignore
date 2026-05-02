@@ -8,4 +8,6 @@ __pycache__/
 .env.*.local
 dist/
 build/
+*.egg-info/
 game_assets_library/
+collected_sources/
