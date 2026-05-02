@@ -6,7 +6,7 @@
 game-asset-collector/
   game_asset_collector/fetch_game_assets.py   <- canonical implementation
   game_asset_collector/reference_pack.py      <- reference pack indexer
-  game_asset_collector/scys_course.py         <- authenticated SCYS page capture
+  game_asset_collector/scys_course.py         <- authenticated 生财有术 SCYS page capture
 ```
 
 ## 消费方式
@@ -54,8 +54,8 @@ local utility CLI
 - `game_assets_library/by_game/`：单游戏长期素材
 - `game_assets_library/reference_packs/`：多游戏研究包，可用 `reference_pack.py`
   生成索引和软链接视图
-- `collected_sources/scys/`：SCYS 课程章节临时采集结果，包含课程原文和签名资源
-  URL，必须保持 Git 忽略，不能混入游戏素材库
+- `collected_sources/scys/`：生财有术 `SCYS` 课程章节临时采集结果，包含课程原文
+  和签名资源 URL，必须保持 Git 忽略，不能混入游戏素材库
 
 ## 当前已确认的优势
 

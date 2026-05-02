@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI shim for authenticated SCYS course capture."""
+"""CLI shim for authenticated 生财有术 SCYS course capture."""
 
 from pathlib import Path
 import sys

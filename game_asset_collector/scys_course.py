@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Authenticated SCYS course/chapter capture helpers.
+"""Authenticated 生财有术 (SCYS) course/chapter capture helpers.
 
 This module reads content that the user can already access in an open Chrome
 tab. It does not export browser cookies or tokens. The token, when present, is
@@ -155,10 +155,10 @@ fetch({_js_string(endpoint)}, {{
                 raise RuntimeError("Chrome capture finished without payload")
             payload = json.loads(payload_text)
             if not payload.get("ok"):
-                raise RuntimeError(f"SCYS capture failed: {payload}")
+                raise RuntimeError(f"生财有术 SCYS capture failed: {payload}")
             return payload
 
-    raise TimeoutError(f"SCYS capture timed out after {timeout_sec}s")
+    raise TimeoutError(f"生财有术 SCYS capture timed out after {timeout_sec}s")
 
 
 def load_wrapper(path: Path) -> dict[str, Any]:
@@ -174,7 +174,7 @@ def unwrap_response(wrapper: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("wrapper text is not a string")
     response = json.loads(text)
     if response.get("status") not in {0, None} and "data" not in response:
-        raise ValueError(f"unexpected SCYS response status: {response.get('status')}")
+        raise ValueError(f"unexpected 生财有术 SCYS response status: {response.get('status')}")
     return response
 
 
@@ -412,7 +412,7 @@ def write_capture_outputs(
     }
     markdown = markdown_for_blocks(blocks, asset_by_block_id)
     plain_text = plain_text_for_blocks(blocks)
-    md_path.write_text(f"# {chapter.get('title', 'SCYS Chapter')}\n\n{markdown}", encoding="utf-8")
+    md_path.write_text(f"# {chapter.get('title', '生财有术 SCYS Chapter')}\n\n{markdown}", encoding="utf-8")
     text_path.write_text(plain_text + "\n", encoding="utf-8")
 
     headings = [
@@ -423,7 +423,7 @@ def write_capture_outputs(
     downloaded = sum(1 for asset in assets if asset.get("local_path"))
     failed = sum(1 for asset in assets if asset.get("download_error"))
     summary = [
-        f"# SCYS Capture Summary: {chapter.get('title', '')}",
+        f"# 生财有术 SCYS Capture Summary: {chapter.get('title', '')}",
         "",
         f"- course_id: {chapter.get('course_id')}",
         f"- chapter_id: {chapter.get('id')}",
@@ -459,8 +459,8 @@ def default_output_dir(target: CourseTarget) -> Path:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Capture an authenticated SCYS course chapter from Chrome.")
-    parser.add_argument("url", nargs="?", help="SCYS course URL, e.g. https://scys.com/course/detail/148?chapterId=9614")
+    parser = argparse.ArgumentParser(description="Capture an authenticated 生财有术 SCYS course chapter from Chrome.")
+    parser.add_argument("url", nargs="?", help="生财有术 SCYS course URL, e.g. https://scys.com/course/detail/148?chapterId=9614")
     parser.add_argument("--course-id", type=int, default=None)
     parser.add_argument("--chapter-id", type=int, default=None)
     parser.add_argument("--out", type=Path, default=None, help="Output directory")

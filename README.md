@@ -67,7 +67,7 @@ game-asset-collector/
     fetch_scys_course.py
   docs/
     product/采集器概览_COLLECTOR_OVERVIEW.md
-    product/生财课程采集_SCYS_COURSE_CAPTURE.md
+    product/生财有术课程采集_SCYS_COURSE_CAPTURE.md
     architecture/当前架构_CURRENT_STATE.md
   tests/
     test_smoke.py
@@ -88,7 +88,8 @@ cp .env.example .env
 
 - `game-asset-collector`：商店截图、视频抽帧、标签和描述采集
 - `game-asset-reference-pack`：给多游戏研究包生成业务分类索引和软链接目录
-- `scys-course-capture`：采集当前 Chrome 登录账号有权限访问的 SCYS 课程章节
+- `scys-course-capture`：采集当前 Chrome 登录账号有权限访问的生财有术
+  `SCYS` 课程章节
 
 推荐做法：
 
@@ -196,9 +197,9 @@ python scripts/fetch_game_assets.py "Narcos: Cartel Wars" \
 
 ## SCYS 课程页面采集
 
-`scys_course` 是独立的页面采集辅助能力，用于用户已经登录并有权限访问的
-`scys.com` 课程章节。项目内统一写作 `SCYS`，如果口头写成 `SYCS`，指的也是
-这个 `scys.com` 入口。
+`SCYS` 是“生财有术”的项目内缩写。`scys_course` 是独立的页面采集辅助能力，
+用于用户已经登录并有权限访问的 `scys.com` 生财有术课程章节。项目内统一写作
+`SCYS`，如果口头写成 `SYCS`，指的也是这个生财有术 `scys.com` 入口。
 
 先在 Chrome 打开课程章节正文，再运行：
 
@@ -209,7 +210,7 @@ python scripts/fetch_scys_course.py "https://scys.com/course/detail/148?chapterI
 输出默认落在 `collected_sources/scys/`，其中会有接口包装、原始 JSON、章节
 Markdown / 纯文本、资源清单和已下载图片。这个目录已加入 `.gitignore`，不要
 把课程原文或签名资源 URL 提交到 Git。详见
-`docs/product/生财课程采集_SCYS_COURSE_CAPTURE.md`。
+`docs/product/生财有术课程采集_SCYS_COURSE_CAPTURE.md`。
 
 ## 视频抽帧模式
 

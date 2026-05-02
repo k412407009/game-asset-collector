@@ -11,7 +11,7 @@
 1. `README.md`
 2. `docs/product/采集器概览_COLLECTOR_OVERVIEW.md`
 3. `docs/architecture/当前架构_CURRENT_STATE.md`
-4. `docs/product/生财课程采集_SCYS_COURSE_CAPTURE.md`（涉及 SCYS 页面采集时）
+4. `docs/product/生财有术课程采集_SCYS_COURSE_CAPTURE.md`（涉及 SCYS 页面采集时）
 5. `game_asset_collector/fetch_game_assets.py`
 6. `game_asset_collector/reference_pack.py`（涉及多游戏研究包索引时）
 7. `game_asset_collector/scys_course.py`（涉及 SCYS 页面采集时）
@@ -22,7 +22,7 @@
 - 如果要改默认输出结构，先确认 `ppt-master` wrapper 和 `game-review` bridge 都还能兼容。
 - 涉及 App Store / Google Play / 视频搜索规则的改动，至少补一条 smoke 验证。
 - 不在这里做评审打分、PPT 生成或网站页面，只做素材采集。
-- SCYS 课程页面采集只处理当前 Chrome 登录账号已有权限访问的内容；不导出 cookies / token，不把输出提交到 Git。
+- SCYS = 生财有术。SCYS 课程页面采集只处理当前 Chrome 登录账号已有权限访问的内容；不导出 cookies / token，不把输出提交到 Git。
 
 ## Asset Library 目录约定（2026-04-25 重组后）
 
@@ -46,7 +46,7 @@ game_assets_library/
 - **某次研究/对标的多游戏包** → `reference_packs/<YYYY-MM-DD>_<topic>_reference_pack/`
 - 评审产出（`.docx`/`.xlsx`/`.json`/`.md`）**不要**塞进来，那些归 `game-review/projects/`
 - 评审项目要看素材时，由 `game-review/projects/<Game>/raw_assets/<game_slug>` **软链接**回这里，不复制
-- SCYS 课程页面采集输出 → `collected_sources/scys/`，该目录只放本机临时资料，不能混入 `game_assets_library/`
+- 生财有术 SCYS 课程页面采集输出 → `collected_sources/scys/`，该目录只放本机临时资料，不能混入 `game_assets_library/`
 
 ## 与 game-review 的协作
 

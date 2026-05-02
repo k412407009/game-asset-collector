@@ -13,8 +13,8 @@
 仓库内还有两个辅助能力：
 
 - `reference_pack`：为多游戏研究包生成 `index/` 索引和 `packaged/` 分类软链接
-- `scys_course`：采集当前 Chrome 登录账号已有权限访问的 `scys.com` 课程章节，输出到
-  `collected_sources/scys/`
+- `scys_course`：采集当前 Chrome 登录账号已有权限访问的 `scys.com` 生财有术
+  `SCYS` 课程章节，输出到 `collected_sources/scys/`
 
 ## 输入
 
@@ -66,6 +66,7 @@ Bilibili `bilisearch` 补位。
 
 ## SCYS 页面采集边界
 
-SCYS 课程采集不属于游戏素材库，不写入 `game_assets_library/`。它只在用户已经
-打开并可阅读对应课程章节时，通过同源页面请求课程接口；不导出 cookies / token，
-输出目录 `collected_sources/scys/` 必须保持 Git 忽略。
+`SCYS` 是“生财有术”的项目内缩写。SCYS 课程采集不属于游戏素材库，不写入
+`game_assets_library/`。它只在用户已经打开并可阅读对应课程章节时，通过同源页面
+请求课程接口；不导出 cookies / token，输出目录 `collected_sources/scys/` 必须保持
+Git 忽略。

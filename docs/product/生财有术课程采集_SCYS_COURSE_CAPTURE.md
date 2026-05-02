@@ -1,11 +1,12 @@
-# 生财课程采集 SCYS Course Capture
+# 生财有术课程采集 SCYS Course Capture
 
-这个能力用于采集用户已经登录且有权限访问的 `scys.com` 课程章节。它通过当前
-Chrome 标签页在同源页面内调用课程接口，不导出浏览器 cookies 或 token；token
-只在页面 JavaScript 内用于请求同一个 `scys.com` 接口。
+`SCYS` 是“生财有术”的项目内缩写。这个能力用于采集用户已经登录且有权限访问的
+`scys.com` 生财有术课程章节。它通过当前 Chrome 标签页在同源页面内调用课程接口，
+不导出浏览器 cookies 或 token；token 只在页面 JavaScript 内用于请求同一个
+`scys.com` 接口。
 
-项目内统一使用 `SCYS` 命名；如果口头写成 `SYCS`，指的也是这个 `scys.com`
-课程页面采集入口。
+项目内统一使用 `SCYS` 命名；如果口头写成 `SYCS`，指的也是“生财有术”的
+`scys.com` 课程页面采集入口。
 
 默认输出在仓库根目录的 `collected_sources/scys/`，该目录已加入 `.gitignore`，
 避免课程原文、签名图片 URL 和下载资源被误提交。
